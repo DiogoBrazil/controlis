@@ -1,0 +1,44 @@
+[package]
+name = "wayland-portal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+protocol.workspace = true
+codec.workspace = true
+capture.workspace = true
+input.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+
+# Real backend dependencies, pulled only when the `enabled` feature is on so that
+# `cargo build --workspace` still works on machines without PipeWire dev libs.
+# pipewire/libspa pinned to 0.9 to match the version xcap links (both bind
+# pipewire-0.3; two versions cannot coexist via the `links` rule).
+ashpd = { version = "0.13", default-features = false, features = ["tokio", "remote_desktop", "screencast"], optional = true }
+pipewire = { version = "0.9", optional = true }
+libspa = { version = "0.9", optional = true }
+tokio = { workspace = true, optional = true }
+# libei client for input on GNOME 45+, which no longer honors the portal's
+# NotifyPointer/NotifyKeyboard methods and delivers input via EIS instead.
+reis = { version = "0.7", optional = true }
+calloop = { version = "0.14", optional = true }
+xkbcommon = { version = "0.9", optional = true }
+
+[features]
+default = []
+enabled = ["dep:ashpd", "dep:pipewire", "dep:libspa", "dep:tokio", "dep:reis", "dep:calloop", "dep:xkbcommon"]
+
+[dev-dependencies]
+anyhow.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tracing-subscriber.workspace = true
+
+[[example]]
+name = "wayland_probe"
+required-features = ["enabled"]
+
+[lints]
+workspace = true

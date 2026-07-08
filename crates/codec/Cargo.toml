@@ -1,0 +1,22 @@
+[package]
+name = "codec"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+# Real video codec (H.264 via OpenH264, built from source). Optional so the
+# workspace still builds with only the JPEG-tiles baseline and no C++ toolchain.
+h264 = ["dep:openh264"]
+
+[dependencies]
+protocol.workspace = true
+jpeg-encoder.workspace = true
+zune-jpeg.workspace = true
+zune-core.workspace = true
+thiserror.workspace = true
+openh264 = { workspace = true, optional = true }
+
+[lints]
+workspace = true

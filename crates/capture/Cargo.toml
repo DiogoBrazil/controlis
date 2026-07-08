@@ -1,0 +1,23 @@
+[package]
+name = "capture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+codec.workspace = true
+protocol.workspace = true
+xcap = { workspace = true, optional = true }
+thiserror.workspace = true
+tracing.workspace = true
+
+[features]
+# The real xcap backend. On Linux this requires system PipeWire dev libraries
+# (libpipewire-0.3), which is why it is opt-in until the Wayland phase; the
+# synthetic backend keeps the pipeline buildable and testable everywhere.
+default = []
+xcap-backend = ["dep:xcap"]
+
+[lints]
+workspace = true

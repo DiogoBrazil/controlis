@@ -1,0 +1,41 @@
+[package]
+name = "controlis"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "controlis"
+path = "src/main.rs"
+
+[features]
+# H.264 via OpenH264, compiled from source (needs a C++ compiler). On by
+# default; sessions fall back to JPEG tiles when a peer lacks it.
+default = ["h264"]
+h264 = ["codec/h264"]
+# Forwarded to the capture crate to enable the real xcap backend (needs system
+# PipeWire dev libraries on Linux).
+real-capture = ["capture/xcap-backend"]
+# Wayland host backend: capture + input via xdg-desktop-portal + PipeWire.
+wayland = ["dep:wayland-portal", "wayland-portal/enabled"]
+
+[dependencies]
+protocol.workspace = true
+session-host.workspace = true
+session-viewer.workspace = true
+wayland-portal = { workspace = true, optional = true }
+capture.workspace = true
+input.workspace = true
+storage.workspace = true
+transport.workspace = true
+codec.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+eframe.workspace = true
+egui.workspace = true
+
+[lints]
+workspace = true
