@@ -87,6 +87,12 @@ impl HostController {
         let _ = self.commands.send(command);
     }
 
+    /// A clonable command sender, for UIs where the controller itself is owned
+    /// by an event-pump task.
+    pub fn command_sender(&self) -> mpsc::UnboundedSender<HostCommand> {
+        self.commands.clone()
+    }
+
     /// The host's certificate fingerprint, for the user to read aloud.
     pub fn fingerprint(&self) -> &str {
         &self.fingerprint
