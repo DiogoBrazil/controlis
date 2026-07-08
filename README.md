@@ -13,8 +13,11 @@ Veja o planejamento completo em [`PLANO-TECNICO.md`](PLANO-TECNICO.md).
 ## Estado atual (MVP)
 
 Ciclo completo funcionando: captura → codec → transporte (QUIC) → decodificação
-→ exibição, e input (mouse/teclado) do viewer aplicado no host. Interface em
-egui com indicador de sessão ativa e botão de encerrar.
+→ exibição, e input (mouse/teclado) do viewer aplicado no host. Interface
+desktop em **Tauri v2 + Leptos** (webview, tema escuro responsivo) com
+indicador de sessão ativa, aprovação manual e botão de encerrar. O viewer
+conecta digitando apenas o **código de acesso** (o endereço do host vai
+embutido no código).
 
 Vídeo: **H.264** (OpenH264, compilado do fonte — feature `h264`, ligada por
 padrão) negociado no handshake, com fallback automático para **dirty tiles +
@@ -27,14 +30,21 @@ bibliotecas de captura do sistema.
 
 ## Compilar e rodar
 
+Pré-requisitos além do Rust: `rustup target add wasm32-unknown-unknown`,
+`trunk` e `tauri-cli` (`cargo install trunk tauri-cli`); no Linux, as
+dependências de sistema do Tauri (`libwebkit2gtk-4.1-dev`, `libgtk-3-dev`).
+
 ```sh
-cargo run -p controlis
+cd apps/controlis-app/src-tauri
+cargo tauri dev          # desenvolvimento (dispara o trunk automaticamente)
+cargo tauri build        # binário/instalador de release
 ```
 
 Para capturar a **tela real** (backend `xcap`):
 
 ```sh
-cargo run -p controlis --features real-capture
+cargo tauri dev --features real-capture
+# release: cargo tauri build --features real-capture
 ```
 
 No Linux o backend `xcap` exige dependências de build do sistema:
@@ -56,10 +66,11 @@ No Linux o backend `xcap` exige dependências de build do sistema:
 
 **Nota sobre Wayland nativo:** o backend `real-capture` (xcap + enigo) usa
 X11/XTest para input e só alcança janelas XWayland. Para captura **e** input
-nativos no Wayland, use o backend de portal:
+nativos no Wayland, use o backend de portal (feature `wayland` do crate em
+`apps/controlis-app/src-tauri`):
 
 ```sh
-cargo run -p controlis --features wayland
+cd apps/controlis-app/src-tauri && cargo tauri build --features wayland,real-capture
 ```
 
 Ele cria uma sessão de portal combinada (ScreenCast + RemoteDesktop) via
@@ -115,7 +126,8 @@ crates/
   session-viewer/  orquestração do viewer (auth, receber/decodificar, enviar input)
   wayland-portal/  backend Wayland: portal (ashpd) + PipeWire (feature `enabled`)
 apps/
-  controlis/       binário único com UI egui
+  controlis-app/   app desktop: frontend Leptos (CSR/wasm) + backend Tauri em
+                   src-tauri (comandos, canais de eventos/frames, seleção de backend)
 docs/              protocolo, arquitetura, matriz de testes
 ```
 
