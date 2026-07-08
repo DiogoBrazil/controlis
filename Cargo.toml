@@ -35,7 +35,7 @@ session-viewer = { path = "crates/session-viewer" }
 wayland-portal = { path = "crates/wayland-portal" }
 
 # Async runtime
-tokio = { version = "1.42", features = ["rt-multi-thread", "macros", "sync", "time", "io-util"] }
+tokio = { version = "1.42", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "signal"] }
 
 # Transport / TLS
 quinn = "0.11"

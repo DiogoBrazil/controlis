@@ -20,21 +20,53 @@ const MAX_LOG_LINES: usize = 200;
 
 type BackendKeepalive = Option<Box<dyn std::any::Any + Send>>;
 
+/// The capture/input backend picked for this host, surfaced in the UI so a
+/// silent fallback (e.g. portal consent denied) is visible to the user.
+struct BackendChoice {
+    capturer: CapturerFactory,
+    injector: InjectorFactory,
+    keepalive: BackendKeepalive,
+    /// Human-readable backend name shown in the host screen.
+    label: String,
+    /// Log line explaining a fallback, when one happened.
+    fallback: Option<String>,
+}
+
 /// Selects the host backend at compile time: Wayland portal when the `wayland`
 /// feature is on (falling back to the default backend if consent fails), otherwise
 /// the default synthetic/xcap capturer plus the enigo injector.
-fn build_backend(handle: &Handle) -> (CapturerFactory, InjectorFactory, BackendKeepalive) {
+fn build_backend(handle: &Handle) -> BackendChoice {
     #[cfg(feature = "wayland")]
-    {
-        match crate::factories::wayland_backend(handle) {
-            Ok((capturer, injector, portal)) => {
-                return (capturer, injector, Some(Box::new(portal)));
-            }
-            Err(e) => tracing::error!("wayland portal unavailable: {e}; using default backend"),
+    let fallback: Option<String> = match crate::factories::wayland_backend(handle) {
+        Ok((capturer, injector, portal)) => {
+            return BackendChoice {
+                capturer,
+                injector,
+                keepalive: Some(Box::new(portal)),
+                label: "Wayland portal (PipeWire + EIS)".into(),
+                fallback: None,
+            };
         }
-    }
+        Err(e) => {
+            tracing::error!("wayland portal unavailable: {e}; using default backend");
+            Some(format!("Portal Wayland indisponível ({e}); usando enigo"))
+        }
+    };
+    #[cfg(not(feature = "wayland"))]
+    let fallback: Option<String> = None;
     let _ = handle;
-    (capturer_factory(), injector_factory(), None)
+    let label = if cfg!(feature = "real-capture") {
+        "xcap + enigo (X11/Windows)"
+    } else {
+        "sintético + enigo (demonstração)"
+    };
+    BackendChoice {
+        capturer: capturer_factory(),
+        injector: injector_factory(),
+        keepalive: None,
+        label: label.into(),
+        fallback,
+    }
 }
 
 /// Host mode: this machine is controlled by a remote viewer.
@@ -46,6 +78,8 @@ pub struct HostScreen {
     peer: Option<String>,
     log: VecDeque<String>,
     store: Option<Store>,
+    /// Which capture/input backend this host is using (shown in the UI).
+    backend_label: String,
     /// Keeps a Wayland portal session alive for the host's lifetime, if used.
     _backend_keepalive: Option<Box<dyn std::any::Any + Send>>,
 }
@@ -58,12 +92,12 @@ impl HostScreen {
             codec: codec::preferred_codec(),
             ..HostConfig::default()
         };
-        let (capturer, injector, keepalive) = build_backend(&handle);
+        let backend = build_backend(&handle);
 
         // start() spawns tasks and therefore must run inside the runtime context.
         let _guard = handle.enter();
-        let controller =
-            start(host_config, identity, capturer, injector).expect("host failed to start");
+        let controller = start(host_config, identity, backend.capturer, backend.injector)
+            .expect("host failed to start");
         let store = match Store::open(db_path) {
             Ok(store) => Some(store),
             Err(e) => {
@@ -71,7 +105,7 @@ impl HostScreen {
                 None
             }
         };
-        Self {
+        let mut screen = Self {
             controller,
             code: None,
             pending: None,
@@ -79,8 +113,13 @@ impl HostScreen {
             peer: None,
             log: VecDeque::new(),
             store,
-            _backend_keepalive: keepalive,
+            backend_label: backend.label,
+            _backend_keepalive: backend.keepalive,
+        };
+        if let Some(line) = backend.fallback {
+            screen.push_log(line);
         }
+        screen
     }
 
     fn audit(&self, peer_addr: &str, accepted: bool, detail: &str) {
@@ -171,6 +210,7 @@ impl HostScreen {
             };
             ui.add_space(4.0);
             ui.label(format!("Porta: {}", self.controller.local_addr().port()));
+            ui.label(format!("Backend: {}", self.backend_label));
             ui.horizontal(|ui| {
                 ui.label("Impressão digital (confira por voz):");
             });

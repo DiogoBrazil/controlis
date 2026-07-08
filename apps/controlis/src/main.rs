@@ -39,6 +39,13 @@ fn main() -> anyhow::Result<()> {
         ..Default::default()
     };
 
-    eframe::run_native("Controlis", native_options, Box::new(|_cc| Ok(Box::new(app))))
-        .map_err(|e| anyhow::anyhow!("eframe error: {e}"))
+    eframe::run_native(
+        "Controlis",
+        native_options,
+        Box::new(|cc| {
+            app.install_ctrl_c_handler(cc.egui_ctx.clone());
+            Ok(Box::new(app))
+        }),
+    )
+    .map_err(|e| anyhow::anyhow!("eframe error: {e}"))
 }

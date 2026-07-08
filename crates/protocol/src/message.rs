@@ -129,6 +129,11 @@ pub enum ControlMessage {
     MouseButton { button: MouseButton, action: PointerAction },
     MouseWheel { delta_x: f32, delta_y: f32 },
     KeyEvent { key: KeyCode, action: PointerAction },
+    /// A run of typed printable characters. Typing travels as text (the host
+    /// injects the exact characters, independent of its keyboard layout and
+    /// shift state); `KeyEvent` stays for named keys and modifier shortcuts,
+    /// where the physical key matters.
+    Text { text: String },
     /// Host tells the viewer the active monitor changed resolution.
     Resize { width_px: u32, height_px: u32 },
     Ping { nonce: u64 },

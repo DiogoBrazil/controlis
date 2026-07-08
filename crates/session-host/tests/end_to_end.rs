@@ -36,6 +36,10 @@ impl InputInjector for MockInjector {
         self.log.lock().unwrap().push(format!("key {key:?} {action:?}"));
         Ok(())
     }
+    fn text(&mut self, text: &str) -> Result<(), InputError> {
+        self.log.lock().unwrap().push(format!("text {text}"));
+        Ok(())
+    }
     fn release_all(&mut self) -> Result<(), InputError> {
         self.log.lock().unwrap().push("release_all".into());
         Ok(())
@@ -112,22 +116,26 @@ async fn full_cycle_streams_frames_and_applies_input() {
         key: KeyCode::Unicode('a'),
         action: PointerAction::Press,
     });
+    viewer.send_input(ControlMessage::Text { text: "ação çê".into() });
 
     let mut saw_move = false;
     let mut saw_key = false;
+    let mut saw_text = false;
     for _ in 0..50 {
         {
             let log = injected.lock().unwrap();
             saw_move = log.iter().any(|e| e.starts_with("move"));
             saw_key = log.iter().any(|e| e.contains("key"));
+            saw_text = log.iter().any(|e| e == "text ação çê");
         }
-        if saw_move && saw_key {
+        if saw_move && saw_key && saw_text {
             break;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert!(saw_move, "pointer move was not injected");
     assert!(saw_key, "key event was not injected");
+    assert!(saw_text, "typed text was not injected");
 
     // Ending the session must release all held input on the host.
     controller.command(session_host::HostCommand::Stop);

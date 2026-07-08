@@ -1,9 +1,15 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use storage::{AppPaths, Config};
 use transport::HostIdentity;
 
 use crate::screens::{HostScreen, ViewerScreen};
+
+/// Set by the Ctrl+C handler; the UI loop turns it into a graceful window close
+/// so the whole drop chain runs (sessions, portal, EIS) instead of the process
+/// dying with a live compositor session.
+static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 /// Which screen the app is showing.
 enum Screen {
@@ -35,6 +41,18 @@ impl ControlisApp {
             runtime,
             screen: Screen::Home,
         }
+    }
+
+    /// Turns Ctrl+C into a graceful window close: the flag is picked up by the
+    /// next `update`, which asks eframe to close, unwinding the app (and any
+    /// portal/EIS session) instead of dying with a live compositor session.
+    pub fn install_ctrl_c_handler(&self, ctx: egui::Context) {
+        self.runtime.spawn(async move {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                SHUTDOWN_REQUESTED.store(true, Ordering::Relaxed);
+                ctx.request_repaint();
+            }
+        });
     }
 
     fn home_ui(&mut self, ui: &mut egui::Ui) {
@@ -77,6 +95,10 @@ impl ControlisApp {
 
 impl eframe::App for ControlisApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if SHUTDOWN_REQUESTED.load(Ordering::Relaxed) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let at_home = matches!(self.screen, Screen::Home);

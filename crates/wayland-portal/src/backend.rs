@@ -34,6 +34,10 @@ pub struct PortalHandle {
     eis: Option<EisInput>,
     capture_stop: Option<CaptureStop>,
     shutdown: Option<oneshot::Sender<()>>,
+    /// Signalled by the portal task after `session.close()` completes, so Drop
+    /// can hold the process alive until the compositor learns the session ended.
+    /// Wrapped in a mutex only to keep the handle `Sync` (receivers are not).
+    closed: Option<Mutex<std::sync::mpsc::Receiver<()>>>,
 }
 
 /// Backend-neutral input commands (translated to EIS events by the ei thread).
@@ -58,7 +62,8 @@ impl PortalHandle {
     pub async fn new(rt: Handle) -> Result<Self, PortalError> {
         let (init_tx, init_rx) = oneshot::channel();
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        rt.spawn(portal_task(init_tx, shutdown_rx));
+        let (closed_tx, closed_rx) = std::sync::mpsc::channel();
+        rt.spawn(portal_task(init_tx, shutdown_rx, closed_tx));
 
         let init = init_rx
             .await
@@ -76,6 +81,7 @@ impl PortalHandle {
             eis: Some(eis),
             capture_stop: Some(capture_stop),
             shutdown: Some(shutdown_tx),
+            closed: Some(Mutex::new(closed_rx)),
         })
     }
 
@@ -112,6 +118,14 @@ impl Drop for PortalHandle {
         if let Some(shutdown) = self.shutdown.take() {
             let _ = shutdown.send(());
         }
+        // Wait (bounded) for the portal task to actually close the session over
+        // D-Bus; a fire-and-forget signal could race process exit and leave the
+        // compositor with a dangling ScreenCast/RemoteDesktop session.
+        if let Some(closed) = self.closed.take() {
+            if let Ok(closed) = closed.into_inner() {
+                let _ = closed.recv_timeout(Duration::from_secs(2));
+            }
+        }
     }
 }
 
@@ -120,14 +134,17 @@ impl Drop for PortalHandle {
 async fn portal_task(
     init_tx: oneshot::Sender<Result<PortalInit, PortalError>>,
     shutdown_rx: oneshot::Receiver<()>,
+    closed_tx: std::sync::mpsc::Sender<()>,
 ) {
     match setup_session().await {
         Ok((_remote, session, init)) => {
-            if init_tx.send(Ok(init)).is_err() {
-                return;
+            if init_tx.send(Ok(init)).is_ok() {
+                let _ = shutdown_rx.await;
             }
-            let _ = shutdown_rx.await;
-            let _ = session.close().await;
+            if let Err(e) = session.close().await {
+                tracing::warn!("portal session close failed: {e}");
+            }
+            let _ = closed_tx.send(());
         }
         Err(e) => {
             let _ = init_tx.send(Err(e));

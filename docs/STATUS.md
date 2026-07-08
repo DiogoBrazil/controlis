@@ -1,6 +1,6 @@
 # STATUS do Controlis — diário de evolução e pendências
 
-> Última atualização: **2026-07-07** (noite, após teste com duas máquinas).
+> Última atualização: **2026-07-08** (correções pós-teste implementadas; aguardando validação com duas máquinas).
 > Este arquivo é o ponto de retomada: o que está pronto, o que foi observado
 > nos testes e o que falta revisar. Complementa o `PLANO-TECNICO.md` (plano) e
 > o `TESTE-DUAS-MAQUINAS.md` (roteiro de teste).
@@ -50,48 +50,49 @@ Build no Windows funcionou de primeira:
 | **Linux host + Windows viewer** | ✅ | ✅ | ✅ tudo funcionou |
 | **Windows host + Linux viewer** | ✅ | ✅ | ⚠️ **BUG: só números e letras maiúsculas** |
 
-## 3. Bugs e pendências abertas (ordem sugerida de ataque)
+## 3. Bugs e pendências (estado em 2026-07-08)
 
-### 3.1 🐛 Teclado no host Windows: só números e maiúsculas
-- Sintoma: com Windows como host, digitação vinda do viewer só produz números
-  e letras maiúsculas (minúsculas não saem corretamente).
-- Caminho do código: viewer envia `KeyCode::Unicode(ch)` press/release
-  (`apps/controlis/src/input_map.rs`, eventos `Text`); host Windows injeta via
-  enigo em `crates/input/src/enigo_backend.rs:128`
-  (`KeyCode::Unicode(c) => Key::Unicode(c)`).
-- Hipóteses a investigar:
-  1. No Windows, `enigo::Key::Unicode` faz press/release via `VkKeyScanW`, cujo
-     retorno inclui um flag de shift no byte alto — se o estado de shift for
-     aplicado/ignorado errado, o case sai errado.
-  2. Interação com o diff de modificadores do viewer (`diff_modifiers` envia
-     Shift press/release separadamente) — pode estar "grudando" Shift no host.
-  3. Alternativa de correção: para texto, usar `Enigo::text()` (SendInput com
-     KEYEVENTF_UNICODE) em vez de press/release de `Key::Unicode` — injeta o
-     caractere exato, independente de layout/shift.
-- Testar também: acentos/ç no Windows host, e símbolos (!@#...).
+### 3.1 ✅ Teclado no host Windows: só números e maiúsculas — CORRIGIDO (validar)
+- Causa-raiz confirmada no fonte do enigo 0.6.1: no Windows, `Key::Unicode(c)`
+  usa `VkKeyScanExW`, que retorna o VK no byte baixo e **flags de shift no byte
+  alto**; o enigo montava `VIRTUAL_KEY(vk as u16)` sem mascarar nem aplicar o
+  shift → caracteres que exigem shift saíam com case errado/VK inválido.
+- Correção (PROTOCOL_VERSION 2→3): digitação agora viaja na nova mensagem
+  `ControlMessage::Text { text }`; o host injeta via `InputInjector::text()`.
+  No enigo isso usa `Enigo::text()` (SendInput + KEYEVENTF_UNICODE = caractere
+  exato, independente de layout/shift — deve resolver acentos/ç também). No
+  backend EIS (Linux) a impl default mantém o comportamento que já funcionava.
+  `KeyEvent` ficou só para teclas nomeadas e atalhos (Ctrl+C etc.).
+- **Pendente:** validar no teste com duas máquinas (Windows host + Linux
+  viewer): minúsculas/MAIÚSCULAS, "ação já çê", símbolos !@#, Ctrl+C/V.
 
-### 3.2 ⚠️ Medição de banda do H.264 (aceite da Fase 7)
-- Nunca medido em captura real: alvo 30fps @ 1080p < 4 Mbps.
-- Sugestão: logar bytes/s enviados no host durante sessão real entre as duas
-  máquinas (ou observar via `nload`/`iftop`).
+### 3.2 ✅ Medição de banda do H.264 — IMPLEMENTADA (medir no teste real)
+- O host agora loga a cada ~5 s, no Registro da UI e no tracing:
+  `mídia (H264): X.XX Mbps, Y.Y fps`. Aceite da Fase 7: 30fps @ 1080p < 4 Mbps.
 
-### 3.3 ⚠️ Teardown da sessão portal/EIS no Linux (relacionado ao freeze 2.2)
-- Garantir Stop da sessão do portal e disconnect do cliente ei em TODOS os
-  caminhos de saída (fim de sessão, erro, panic, Ctrl+C).
-- Objetivo: nunca mais deixar o mutter pendurado.
+### 3.3 ✅ Teardown da sessão portal/EIS — ENDURECIDO (validar no GNOME)
+- Cliente EIS: em todo caminho de saída (shutdown, canal fechado, erro do loop)
+  agora faz `stop_emulating` nos devices, `connection.disconnect()` e flush.
+- Portal: `PortalHandle::drop` aguarda (até 2 s) o ack de `session.close()`
+  antes de deixar o processo morrer — sem sessão pendurada no compositor.
+- Ctrl+C: tratado via `tokio::signal` → fecha a janela graciosamente → o drop
+  chain (sessões → portal → EIS) roda por inteiro. Panics já faziam unwind.
+- **Pendente:** validar que o freeze do mutter (2.2) não reaparece.
 
 ### 3.4 Limitações conhecidas do teclado EIS (Linux host)
 - AltGr, dead-keys e acentos compostos ainda não suportados
   (`eis_input.rs`, mapa keysym→keycode). Não bloqueou o teste, mas revisar.
+  (Obs.: com a mensagem `Text`, acentos digitados no viewer chegam como
+  caracteres prontos — o gap real fica restrito a composição local exótica.)
 
 ### 3.5 ❌ Fase 8 — Rendezvous / Relay / NAT
 - Hoje só funciona na mesma LAN. Próxima grande entrega para uso real
   (conceito AnyDesk: conectar por ID através da internet).
 
-### 3.6 Melhorias de UX/robustez observadas nos testes
-- Fallback do backend Wayland→enigo é silencioso (só `tracing::error`);
-  considerar avisar na UI qual backend de input está ativo.
-- Documentar/automatizar regra de firewall no Windows host (UDP).
+### 3.6 Melhorias de UX/robustez
+- ✅ A UI do host agora mostra o backend ativo ("Backend: Wayland portal
+  (PipeWire + EIS)" / "xcap + enigo"); fallback do portal aparece no Registro.
+- ⬜ Documentar/automatizar regra de firewall no Windows host (UDP).
 
 ## 4. Como retomar o ambiente de teste (resumo)
 
@@ -108,7 +109,14 @@ Build no Windows funcionou de primeira:
 ## 5. Onde paramos exatamente
 
 O MVP LAN está **funcional de ponta a ponta nas duas direções** entre Linux
-(Wayland/GNOME 46) e Windows, com vídeo e mouse perfeitos. O único defeito
-funcional aberto é o teclado no host Windows (item 3.1) — é o primeiro item da
-próxima sessão de trabalho, seguido da medição de banda H.264 (3.2) e do
-endurecimento do teardown Wayland (3.3). Depois disso, Fase 8.
+(Wayland/GNOME 46) e Windows. Em 2026-07-08 foram implementados: o fix do
+teclado no host Windows via mensagem `Text` + `Enigo::text()` (3.1, protocolo
+v3), o log de banda no host (3.2), o endurecimento do teardown portal/EIS +
+Ctrl+C gracioso (3.3) e o indicador de backend na UI (3.6). Workspace com
+testes verdes e clippy limpo.
+
+**Próxima sessão:** repetir o teste com duas máquinas (rebuild NAS DUAS pontas
+— o protocolo subiu para v3) seguindo o checklist novo do `test-matrix.md`:
+teclado no Windows host (minúsculas/acentos/símbolos/atalhos), leitura do
+Mbps no Registro, e teardown no Linux (fechar app/Ctrl+C sem congelar o
+gnome-shell). Validado isso, começa a **Fase 8** (rendezvous/relay/NAT).

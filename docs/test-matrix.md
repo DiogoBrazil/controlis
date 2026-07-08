@@ -25,8 +25,13 @@ Wayland (host) entra na Fase 9.
 - [ ] Vídeo aparece no viewer; tela parada consome banda próxima de zero.
 - [ ] Ponteiro acerta o alvo com host e viewer em resoluções/DPI diferentes.
 - [ ] Clique esquerdo/direito/meio; arrastar; scroll.
+- [ ] Digitação: minúsculas ("abc"), MAIÚSCULAS ("ABC"), números ("123").
 - [ ] Digitação pt-BR/ABNT2 (ex.: "ação já çê") chega correta.
-- [ ] Atalhos com modificador (Ctrl+C, Alt+Tab) funcionam.
+- [ ] Símbolos com shift (!@#$%&*?) chegam corretos.
+- [ ] Atalhos com modificador (Ctrl+C/V, Alt+Tab) funcionam.
+- [ ] Shift+setas seleciona texto no host (modificadores via `KeyEvent`).
+- [ ] Log de banda no Registro do host (~5 s): H.264 a 1080p < 4 Mbps.
+- [ ] UI do host mostra o backend de captura/input ativo (sem fallback silencioso).
 - [ ] Encerrar pela host libera o input e gera novo código.
 - [ ] Queda de rede: host volta ao estado "aguardando"; nenhuma tecla fica presa.
 - [ ] TOFU: reconexão com o mesmo host passa; certificado trocado gera alerta.
