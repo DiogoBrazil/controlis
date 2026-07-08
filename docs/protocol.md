@@ -19,11 +19,16 @@ depuração. Payloads binários (quadros) usam `serde_bytes` para evitar overhea
 
 ## Versionamento
 
-`Hello.protocol_version` (`u16`, atualmente `2`) é trocado no início. Versão
+`Hello.protocol_version` (`u16`, atualmente `3`) é trocado no início. Versão
 incompatível é rejeitada com `Error` e a conexão é encerrada.
 
-Histórico: v2 adicionou `VideoCodec::H264` (muda a forma no fio de `Hello` e
-dos quadros de mídia).
+Histórico:
+- v2 adicionou `VideoCodec::H264` (muda a forma no fio de `Hello` e dos
+  quadros de mídia).
+- v3 adicionou `Text { text }`: digitação viaja como texto e o host injeta os
+  caracteres exatos, independente de layout/shift (no Windows, via `SendInput`
+  + `KEYEVENTF_UNICODE`). `KeyEvent` passa a ser usado apenas para teclas
+  nomeadas e atalhos com modificador.
 
 ## Handshake e autenticação
 
@@ -47,7 +52,8 @@ Regras no host:
 | `MouseMove { x_norm, y_norm }` | viewer → host | coordenadas normalizadas 0..1 no monitor ativo |
 | `MouseButton { button, action }` | viewer → host | `Left/Right/Middle`, `Press/Release` |
 | `MouseWheel { delta_x, delta_y }` | viewer → host | positivo y = cima |
-| `KeyEvent { key, action }` | viewer → host | `KeyCode` nomeado ou `Unicode(char)` |
+| `KeyEvent { key, action }` | viewer → host | teclas nomeadas e atalhos: `KeyCode` nomeado ou `Unicode(char)` com modificador |
+| `Text { text }` | viewer → host | digitação: caracteres imprimíveis injetados literalmente no host (independe de layout/shift) |
 | `SelectMonitor { monitor_id }` | viewer → host | troca o monitor capturado ao vivo; host força keyframe e envia `Resize` |
 | `Resize { width_px, height_px }` | host → viewer | mudança de resolução do monitor ativo |
 | `Ping/Pong { nonce }` | ambos | verificação de vida |

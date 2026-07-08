@@ -42,9 +42,69 @@ pub trait InputInjector {
     /// Presses or releases a key.
     fn key(&mut self, key: KeyCode, action: PointerAction) -> Result<(), InputError>;
 
+    /// Types a run of printable characters (no shortcuts).
+    ///
+    /// The default maps each character to a [`KeyCode::Unicode`] press/release
+    /// pair; backends override it when the platform has a dedicated text path
+    /// (e.g. `SendInput` + `KEYEVENTF_UNICODE` on Windows), which injects the
+    /// exact characters regardless of layout and shift state.
+    fn text(&mut self, text: &str) -> Result<(), InputError> {
+        for c in text.chars() {
+            self.key(KeyCode::Unicode(c), PointerAction::Press)?;
+            self.key(KeyCode::Unicode(c), PointerAction::Release)?;
+        }
+        Ok(())
+    }
+
     /// Releases every key and button this injector currently holds down.
     ///
     /// Called on disconnect (including abrupt drops) so no modifier or button is
     /// left stuck on the host.
     fn release_all(&mut self) -> Result<(), InputError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Injector that only implements the required methods, exercising the
+    /// default `text` implementation.
+    #[derive(Default)]
+    struct Recorder {
+        events: Vec<(KeyCode, PointerAction)>,
+    }
+
+    impl InputInjector for Recorder {
+        fn move_pointer(&mut self, _x: i32, _y: i32) -> Result<(), InputError> {
+            Ok(())
+        }
+        fn mouse_button(&mut self, _b: MouseButton, _a: PointerAction) -> Result<(), InputError> {
+            Ok(())
+        }
+        fn mouse_wheel(&mut self, _dx: f32, _dy: f32) -> Result<(), InputError> {
+            Ok(())
+        }
+        fn key(&mut self, key: KeyCode, action: PointerAction) -> Result<(), InputError> {
+            self.events.push((key, action));
+            Ok(())
+        }
+        fn release_all(&mut self) -> Result<(), InputError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn default_text_types_each_char_as_press_release() {
+        let mut recorder = Recorder::default();
+        recorder.text("aç").unwrap();
+        assert_eq!(
+            recorder.events,
+            vec![
+                (KeyCode::Unicode('a'), PointerAction::Press),
+                (KeyCode::Unicode('a'), PointerAction::Release),
+                (KeyCode::Unicode('ç'), PointerAction::Press),
+                (KeyCode::Unicode('ç'), PointerAction::Release),
+            ]
+        );
+    }
 }

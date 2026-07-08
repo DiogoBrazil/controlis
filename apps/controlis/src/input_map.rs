@@ -46,16 +46,7 @@ pub fn forward(
             }
             Event::Text(text) => {
                 if !modifiers.ctrl && !modifiers.alt && !modifiers.command {
-                    for ch in text.chars() {
-                        handle.send_input(ControlMessage::KeyEvent {
-                            key: KeyCode::Unicode(ch),
-                            action: PointerAction::Press,
-                        });
-                        handle.send_input(ControlMessage::KeyEvent {
-                            key: KeyCode::Unicode(ch),
-                            action: PointerAction::Release,
-                        });
-                    }
+                    handle.send_input(ControlMessage::Text { text });
                 }
             }
             Event::Key { key, pressed, modifiers: m, .. } => {

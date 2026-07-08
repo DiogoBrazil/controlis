@@ -18,7 +18,9 @@ use serde::{de::DeserializeOwned, Serialize};
 
 /// Protocol version negotiated in [`Hello`]. Bumped on any incompatible change.
 /// v2: added [`VideoCodec::H264`] (changes the wire shape of `Hello` and frames).
-pub const PROTOCOL_VERSION: u16 = 2;
+/// v3: added [`ControlMessage::Text`] (typing travels as text; `KeyEvent` is for
+/// named keys and shortcuts only).
+pub const PROTOCOL_VERSION: u16 = 3;
 
 /// Errors produced while encoding or decoding protocol messages.
 #[derive(Debug, thiserror::Error)]

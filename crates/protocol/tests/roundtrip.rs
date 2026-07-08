@@ -60,6 +60,9 @@ fn control_messages_roundtrip() {
         key: KeyCode::Function(5),
         action: PointerAction::Release,
     });
+    roundtrip_control(ControlMessage::Text {
+        text: "ação já çê !@# ABC 123".into(),
+    });
     roundtrip_control(ControlMessage::Ping { nonce: u64::MAX });
     roundtrip_control(ControlMessage::Disconnect {
         reason: "user closed".into(),

@@ -23,6 +23,7 @@ enum InputAction {
     Button(MouseButton, PointerAction),
     Wheel(f32, f32),
     Key(KeyCode, PointerAction),
+    Text(String),
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -276,10 +277,31 @@ async fn stream_and_control(
     spawn_injection(injector_factory.clone(), input_rx, event_tx.clone());
 
     let media_conn = connection.clone();
+    let media_events = event_tx.clone();
     let media_task = tokio::spawn(async move {
+        // Bandwidth accounting: payload bytes dominate; framing/QUIC overhead is
+        // negligible next to the 4 Mbps acceptance target for phase 7.
+        let mut bytes: u64 = 0;
+        let mut frames: u64 = 0;
+        let mut window_start = Instant::now();
         while let Some(message) = media_rx.recv().await {
+            let protocol::MediaMessage::ScreenFrame { ref payload, .. } = message;
+            bytes += payload.len() as u64;
+            frames += 1;
             if media_conn.send_media(&message).await.is_err() {
                 break;
+            }
+            let elapsed = window_start.elapsed();
+            if elapsed >= Duration::from_secs(5) {
+                let mbps = (bytes as f64 * 8.0) / elapsed.as_secs_f64() / 1_000_000.0;
+                let fps = frames as f64 / elapsed.as_secs_f64();
+                let line =
+                    format!("mídia ({codec:?}): {mbps:.2} Mbps, {fps:.1} fps");
+                tracing::info!("{line}");
+                let _ = media_events.send(HostEvent::Log(line));
+                bytes = 0;
+                frames = 0;
+                window_start = Instant::now();
             }
         }
     });
@@ -342,6 +364,9 @@ async fn control_loop(
                     }
                     Ok(ControlMessage::KeyEvent { key, action }) => {
                         let _ = input_tx.send(InputAction::Key(key, action));
+                    }
+                    Ok(ControlMessage::Text { text }) => {
+                        let _ = input_tx.send(InputAction::Text(text));
                     }
                     Ok(ControlMessage::Ping { nonce }) => {
                         let _ = control.send(&ControlMessage::Pong { nonce }).await;
@@ -439,6 +464,7 @@ fn apply_input(injector: &mut dyn InputInjector, action: InputAction) -> Result<
         InputAction::Button(button, act) => injector.mouse_button(button, act),
         InputAction::Wheel(dx, dy) => injector.mouse_wheel(dx, dy),
         InputAction::Key(key, act) => injector.key(key, act),
+        InputAction::Text(text) => injector.text(&text),
     }
 }
 

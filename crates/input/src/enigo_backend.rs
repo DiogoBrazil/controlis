@@ -93,6 +93,15 @@ impl InputInjector for EnigoInjector {
         Ok(())
     }
 
+    fn text(&mut self, text: &str) -> Result<(), InputError> {
+        // enigo's text path injects the exact characters (KEYEVENTF_UNICODE on
+        // Windows), sidestepping VkKeyScanW's shift-state handling that breaks
+        // per-key Key::Unicode injection for shifted characters.
+        self.enigo
+            .text(text)
+            .map_err(|e| InputError::Inject(e.to_string()))
+    }
+
     fn release_all(&mut self) -> Result<(), InputError> {
         let keys: Vec<KeyCode> = self.held_keys.drain().collect();
         let buttons: Vec<MouseButton> = self.held_buttons.drain().collect();

@@ -127,10 +127,19 @@ fn run(fd: OwnedFd, channel: calloop::channel::Channel<Msg>) -> Result<(), Porta
         .map_err(err)?;
 
     let mut state = State::new(context);
-    while state.running {
-        event_loop.dispatch(None, &mut state).map_err(err)?;
-    }
-    Ok(())
+    let result = loop {
+        if !state.running {
+            break Ok(());
+        }
+        if let Err(e) = event_loop.dispatch(None, &mut state) {
+            break Err(err(e));
+        }
+    };
+    // Runs on every exit path (shutdown, channel closed, dispatch error) so the
+    // compositor never keeps a half-open emulation session around — leaving one
+    // behind is a suspect in the 2026-07-07 gnome-shell freeze.
+    state.teardown();
+    result
 }
 
 #[derive(Default)]
@@ -159,6 +168,7 @@ struct KeyboardDevice {
 
 struct State {
     context: ei::Context,
+    connection: Option<ei::Connection>,
     seats: HashMap<ei::Seat, SeatData>,
     devices: HashMap<ei::Device, DeviceData>,
     pointer: Option<PointerDevice>,
@@ -176,6 +186,7 @@ impl State {
     fn new(context: ei::Context) -> Self {
         Self {
             context,
+            connection: None,
             seats: HashMap::new(),
             devices: HashMap::new(),
             pointer: None,
@@ -208,6 +219,9 @@ impl State {
     }
 
     fn handle(&mut self, event: ei::Event) {
+        if let ei::Event::Connection(connection, _) = &event {
+            self.connection = Some(connection.clone());
+        }
         match event {
             ei::Event::Handshake(handshake, ei::handshake::Event::HandshakeVersion { .. }) => {
                 handshake.handshake_version(1);
@@ -412,6 +426,28 @@ impl State {
         } else {
             self.pending.push(cmd);
         }
+    }
+
+    /// Ends emulation and announces the disconnect so the compositor can tear
+    /// the EIS session down cleanly instead of seeing the socket vanish.
+    fn teardown(&mut self) {
+        let serial = self.last_serial;
+        if let Some(pointer) = &mut self.pointer {
+            if pointer.emulating {
+                pointer.device.stop_emulating(serial);
+                pointer.emulating = false;
+            }
+        }
+        if let Some(keyboard) = &mut self.keyboard {
+            if keyboard.emulating {
+                keyboard.device.stop_emulating(serial);
+                keyboard.emulating = false;
+            }
+        }
+        if let Some(connection) = &self.connection {
+            connection.disconnect();
+        }
+        let _ = self.context.flush();
     }
 
     fn apply(&mut self, cmd: InputCmd) {
