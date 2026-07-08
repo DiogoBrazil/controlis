@@ -19,7 +19,9 @@ Wayland (host) entra na Fase 9.
 
 ## Checklist por combinação
 
-- [ ] Host exibe código e impressão digital; viewer conecta com código correto.
+- [ ] Host exibe código de acesso (16 chars) e impressão digital; viewer conecta
+      digitando **só o código** (sem IP).
+- [ ] Modo avançado do viewer: endereço manual sobrepõe o embutido no código.
 - [ ] Código errado é rejeitado; 5 erros disparam backoff (mensagem de espera).
 - [ ] Aprovação manual: host mostra o pedido; Aceitar/Recusar funcionam.
 - [ ] Vídeo aparece no viewer; tela parada consome banda próxima de zero.

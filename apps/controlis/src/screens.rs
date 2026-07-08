@@ -69,6 +69,22 @@ fn build_backend(handle: &Handle) -> BackendChoice {
     }
 }
 
+/// Best-effort LAN IPv4 for the access code; a `advertised_ip` in config.toml
+/// takes precedence (machines with VPNs/virtual adapters may need it).
+fn detect_lan_ip() -> Option<std::net::Ipv4Addr> {
+    match local_ip_address::local_ip() {
+        Ok(std::net::IpAddr::V4(ip)) => Some(ip),
+        Ok(std::net::IpAddr::V6(ip)) => {
+            tracing::warn!("primary local address is IPv6 ({ip}); access codes carry IPv4 only");
+            None
+        }
+        Err(e) => {
+            tracing::warn!("could not detect the LAN IP: {e}");
+            None
+        }
+    }
+}
+
 /// Host mode: this machine is controlled by a remote viewer.
 pub struct HostScreen {
     controller: HostController,
@@ -86,10 +102,12 @@ pub struct HostScreen {
 
 impl HostScreen {
     pub fn start(handle: Handle, config: &Config, identity: HostIdentity, db_path: &Path) -> Self {
+        let advertised_ip = config.advertised_ip.or_else(detect_lan_ip);
         let host_config = HostConfig {
             bind_addr: SocketAddr::from(([0, 0, 0, 0], config.host_port)),
             require_manual_approval: config.require_manual_approval,
             codec: codec::preferred_codec(),
+            advertised_ip,
             ..HostConfig::default()
         };
         let backend = build_backend(&handle);
@@ -118,6 +136,13 @@ impl HostScreen {
         };
         if let Some(line) = backend.fallback {
             screen.push_log(line);
+        }
+        if advertised_ip.is_none() {
+            screen.push_log(
+                "IP da rede local não detectado: o código só funciona nesta máquina. \
+                 Defina advertised_ip no config.toml ou use o modo avançado no viewer."
+                    .into(),
+            );
         }
         screen
     }
@@ -199,11 +224,11 @@ impl HostScreen {
         }
 
         ui.heading("Modo Host");
-        ui.label("Compartilhe o código abaixo com quem vai controlar este computador.");
+        ui.label("Dite o código abaixo para quem vai controlar este computador.");
         ui.add_space(8.0);
 
         ui.group(|ui| {
-            ui.label("Código da sessão:");
+            ui.label("Código de acesso (inclui o endereço desta máquina):");
             match &self.code {
                 Some(code) => ui.label(RichText::new(code).heading().monospace().strong()),
                 None => ui.label(RichText::new("gerando…").italics()),
@@ -254,10 +279,26 @@ impl HostScreen {
 
 /// Viewer mode state machine.
 enum ViewerState {
-    Idle { addr_text: String, code_text: String, error: Option<String> },
+    Idle {
+        code_text: String,
+        /// Optional `IP:porta` overriding the address embedded in the code
+        /// (kept under an "advanced" disclosure for multi-interface hosts).
+        addr_override: String,
+        error: Option<String>,
+    },
     Connecting { rx: mpsc::Receiver<Result<ViewerHandle, ViewerError>> },
     Active(Box<ActiveViewer>),
     Failed(String),
+}
+
+impl ViewerState {
+    fn idle() -> Self {
+        ViewerState::Idle {
+            code_text: String::new(),
+            addr_override: String::new(),
+            error: None,
+        }
+    }
 }
 
 struct ActiveViewer {
@@ -276,14 +317,10 @@ pub struct ViewerScreen {
 }
 
 impl ViewerScreen {
-    pub fn new(runtime: Handle, default_port: u16) -> Self {
+    pub fn new(runtime: Handle) -> Self {
         Self {
             runtime,
-            state: ViewerState::Idle {
-                addr_text: format!("127.0.0.1:{default_port}"),
-                code_text: String::new(),
-                error: None,
-            },
+            state: ViewerState::idle(),
         }
     }
 
@@ -297,20 +334,33 @@ impl ViewerScreen {
     }
 
     fn idle_ui(&mut self, ui: &mut egui::Ui) {
-        let ViewerState::Idle { addr_text, code_text, error } = &mut self.state else {
+        let ViewerState::Idle { code_text, addr_override, error } = &mut self.state else {
             return;
         };
         ui.heading("Modo Viewer");
-        ui.label("Informe o endereço e o código exibidos no computador host.");
+        ui.label("Digite o código de acesso exibido no computador host.");
         ui.add_space(8.0);
 
-        egui::Grid::new("connect_form").num_columns(2).show(ui, |ui| {
-            ui.label("Endereço (IP:porta):");
-            ui.text_edit_singleline(addr_text);
-            ui.end_row();
-            ui.label("Código da sessão:");
-            ui.text_edit_singleline(code_text);
-            ui.end_row();
+        ui.horizontal(|ui| {
+            ui.label("Código de acesso:");
+            ui.add(
+                egui::TextEdit::singleline(code_text)
+                    .hint_text("XXXX-XXXX-XXXX-XXXX")
+                    .desired_width(220.0)
+                    .font(egui::TextStyle::Monospace),
+            );
+        });
+
+        egui::CollapsingHeader::new("Avançado").show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Endereço manual (IP:porta):");
+                ui.add(
+                    egui::TextEdit::singleline(addr_override)
+                        .hint_text("vazio = usar o do código")
+                        .desired_width(180.0),
+                );
+            });
+            ui.small("Use apenas se o host tiver várias interfaces e o código apontar para a errada.");
         });
 
         if let Some(err) = error {
@@ -319,20 +369,34 @@ impl ViewerScreen {
 
         ui.add_space(8.0);
         if ui.button("Conectar").clicked() {
-            match addr_text.trim().parse::<SocketAddr>() {
-                Ok(addr) => {
-                    let code = code_text.trim().to_string();
+            match Self::resolve_target(code_text, addr_override) {
+                Ok((addr, code)) => {
                     let (tx, rx) = mpsc::channel();
                     self.runtime.spawn(async move {
                         let _ = tx.send(connect(addr, code, None).await);
                     });
                     self.state = ViewerState::Connecting { rx };
                 }
-                Err(_) => {
-                    *error = Some("Endereço inválido. Use IP:porta, ex. 192.168.0.10:21118".into());
-                }
+                Err(message) => *error = Some(message),
             }
         }
+    }
+
+    /// Turns the typed access code (plus optional manual address) into the
+    /// connection target and the canonical code to authenticate with.
+    fn resolve_target(code_text: &str, addr_override: &str) -> Result<(SocketAddr, String), String> {
+        let code = security::ConnectCode::parse(code_text.trim()).map_err(|e| {
+            format!("Código inválido ({e}). Confira com quem está no computador host.")
+        })?;
+        let addr = if addr_override.trim().is_empty() {
+            code.addr().into()
+        } else {
+            addr_override
+                .trim()
+                .parse::<SocketAddr>()
+                .map_err(|_| "Endereço manual inválido. Use IP:porta, ex. 192.168.0.10:21118".to_string())?
+        };
+        Ok((addr, code.as_str().to_string()))
     }
 
     fn connecting_ui(&mut self, ui: &mut egui::Ui) {
@@ -451,11 +515,7 @@ impl ViewerScreen {
         ui.colored_label(Color32::LIGHT_RED, reason.as_str());
         ui.add_space(8.0);
         if ui.button("Voltar").clicked() {
-            self.state = ViewerState::Idle {
-                addr_text: "127.0.0.1:21118".into(),
-                code_text: String::new(),
-                error: None,
-            };
+            self.state = ViewerState::idle();
         }
     }
 }

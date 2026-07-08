@@ -8,7 +8,7 @@ use protocol::{
     negotiate_codec, AuthOutcome, ControlMessage, KeyCode, MonitorInfo, MouseButton,
     PointerAction, VideoCodec, PROTOCOL_VERSION,
 };
-use security::{BruteForceGuard, GuardDecision, SessionCode};
+use security::{BruteForceGuard, ConnectCode, GuardDecision};
 use tokio::sync::mpsc;
 use transport::{Connection, ControlChannel};
 
@@ -30,7 +30,7 @@ enum InputAction {
 pub(crate) async fn run_session(
     config: &HostConfig,
     connection: Connection,
-    code: &SessionCode,
+    code: &ConnectCode,
     guard: &mut BruteForceGuard,
     capturer_factory: &CapturerFactory,
     injector_factory: &InjectorFactory,
@@ -80,7 +80,7 @@ async fn authenticate(
     _config: &HostConfig,
     connection: &Connection,
     control: &mut ControlChannel,
-    code: &SessionCode,
+    code: &ConnectCode,
     guard: &mut BruteForceGuard,
     event_tx: &mpsc::UnboundedSender<HostEvent>,
     command_rx: &mut mpsc::UnboundedReceiver<HostCommand>,

@@ -27,6 +27,7 @@ session-viewer.workspace = true
 wayland-portal = { workspace = true, optional = true }
 capture.workspace = true
 input.workspace = true
+security.workspace = true
 storage.workspace = true
 transport.workspace = true
 codec.workspace = true
@@ -36,6 +37,7 @@ tracing-subscriber.workspace = true
 anyhow.workspace = true
 eframe.workspace = true
 egui.workspace = true
+local-ip-address = "0.6.13"
 
 [lints]
 workspace = true

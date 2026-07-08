@@ -1,6 +1,6 @@
 # STATUS do Controlis — diário de evolução e pendências
 
-> Última atualização: **2026-07-08** (correções pós-teste implementadas; aguardando validação com duas máquinas).
+> Última atualização: **2026-07-08** (fix do teclado VALIDADO pelo usuário; código de acesso autocontido implementado).
 > Este arquivo é o ponto de retomada: o que está pronto, o que foi observado
 > nos testes e o que falta revisar. Complementa o `PLANO-TECNICO.md` (plano) e
 > o `TESTE-DUAS-MAQUINAS.md` (roteiro de teste).
@@ -52,7 +52,7 @@ Build no Windows funcionou de primeira:
 
 ## 3. Bugs e pendências (estado em 2026-07-08)
 
-### 3.1 ✅ Teclado no host Windows: só números e maiúsculas — CORRIGIDO (validar)
+### 3.1 ✅ Teclado no host Windows — CORRIGIDO E VALIDADO (2026-07-08)
 - Causa-raiz confirmada no fonte do enigo 0.6.1: no Windows, `Key::Unicode(c)`
   usa `VkKeyScanExW`, que retorna o VK no byte baixo e **flags de shift no byte
   alto**; o enigo montava `VIRTUAL_KEY(vk as u16)` sem mascarar nem aplicar o
@@ -63,8 +63,7 @@ Build no Windows funcionou de primeira:
   exato, independente de layout/shift — deve resolver acentos/ç também). No
   backend EIS (Linux) a impl default mantém o comportamento que já funcionava.
   `KeyEvent` ficou só para teclas nomeadas e atalhos (Ctrl+C etc.).
-- **Pendente:** validar no teste com duas máquinas (Windows host + Linux
-  viewer): minúsculas/MAIÚSCULAS, "ação já çê", símbolos !@#, Ctrl+C/V.
+- ✅ Validado pelo usuário em 2026-07-08: digitação funcionando corretamente.
 
 ### 3.2 ✅ Medição de banda do H.264 — IMPLEMENTADA (medir no teste real)
 - O host agora loga a cada ~5 s, no Registro da UI e no tracing:
@@ -94,6 +93,20 @@ Build no Windows funcionou de primeira:
   (PipeWire + EIS)" / "xcap + enigo"); fallback do portal aparece no Registro.
 - ⬜ Documentar/automatizar regra de firewall no Windows host (UDP).
 
+### 3.7 ✅ Código de acesso autocontido (conectar só com o código) — 2026-07-08
+- O host agora exibe UM código de 16 caracteres (`XXXX-XXXX-XXXX-XXXX`, base32
+  Crockford) que embute IP + porta + segredo de 30 bits, com 2 bits de versão
+  (preparando a Fase 8: ID de rendezvous no mesmo campo). O viewer digita só o
+  código; campo `IP:porta` virou "Avançado" (sobrepõe o endereço embutido).
+- IP detectado via crate `local-ip-address` (tabela de rotas do SO); override
+  `advertised_ip` no config.toml para máquinas com várias interfaces/VPN. Sem
+  detecção, o host avisa no Registro.
+- Sem mudança de protocolo (`AuthRequest.session_code` = código completo;
+  comparação constant-time como antes). Formato em `docs/protocol.md`;
+  implementação em `crates/security/src/connect_code.rs`.
+- **Pendente:** validar com duas máquinas (conectar só com o código; testar
+  modo avançado; conferir IP detectado na máquina com VPN, se houver).
+
 ## 4. Como retomar o ambiente de teste (resumo)
 
 - **Linux (host):**
@@ -109,14 +122,14 @@ Build no Windows funcionou de primeira:
 ## 5. Onde paramos exatamente
 
 O MVP LAN está **funcional de ponta a ponta nas duas direções** entre Linux
-(Wayland/GNOME 46) e Windows. Em 2026-07-08 foram implementados: o fix do
-teclado no host Windows via mensagem `Text` + `Enigo::text()` (3.1, protocolo
-v3), o log de banda no host (3.2), o endurecimento do teardown portal/EIS +
-Ctrl+C gracioso (3.3) e o indicador de backend na UI (3.6). Workspace com
-testes verdes e clippy limpo.
+(Wayland/GNOME 46) e Windows, **com o teclado do host Windows validado**
+(3.1). Também em 2026-07-08: log de banda (3.2), teardown portal/EIS
+endurecido (3.3), indicador de backend (3.6) e o **código de acesso
+autocontido** (3.7) — o viewer agora conecta digitando só o código.
+Workspace com testes verdes e clippy limpo.
 
-**Próxima sessão:** repetir o teste com duas máquinas (rebuild NAS DUAS pontas
-— o protocolo subiu para v3) seguindo o checklist novo do `test-matrix.md`:
-teclado no Windows host (minúsculas/acentos/símbolos/atalhos), leitura do
-Mbps no Registro, e teardown no Linux (fechar app/Ctrl+C sem congelar o
-gnome-shell). Validado isso, começa a **Fase 8** (rendezvous/relay/NAT).
+**Próxima sessão:** teste com duas máquinas (rebuild nas duas pontas) cobrindo
+o fluxo novo de conexão só com código (3.7), a leitura do Mbps no Registro
+(3.2) e o teardown no Linux — fechar app/Ctrl+C sem congelar o gnome-shell
+(3.3). Validado isso, começa a **Fase 8** (rendezvous/relay/NAT), reusando os
+bits de versão do código de acesso para o ID de rendezvous.

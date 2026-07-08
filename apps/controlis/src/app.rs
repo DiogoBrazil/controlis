@@ -79,10 +79,8 @@ impl ControlisApp {
                 .add_sized([260.0, 48.0], egui::Button::new("👁  Controlar outro (Viewer)"))
                 .clicked()
             {
-                let default_port = self.config.host_port;
                 self.screen = Screen::Viewer(Box::new(ViewerScreen::new(
                     self.runtime.handle().clone(),
-                    default_port,
                 )));
             }
         });

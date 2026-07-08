@@ -68,6 +68,7 @@ async fn full_cycle_streams_frames_and_applies_input() {
         require_manual_approval: false,
         codec: codec::preferred_codec(),
         target_fps: 30,
+        advertised_ip: Some(std::net::Ipv4Addr::LOCALHOST),
     };
     let identity = HostIdentity::generate().unwrap();
 
@@ -83,8 +84,12 @@ async fn full_cycle_streams_frames_and_applies_input() {
     )
     .unwrap();
 
-    let addr = controller.local_addr();
     let code = wait_for_code(&mut controller).await;
+    // The access code is self-contained: the viewer derives the host address
+    // from it instead of being told the IP separately.
+    let parsed = security::ConnectCode::parse(&code).expect("code decodes");
+    let addr: std::net::SocketAddr = parsed.addr().into();
+    assert_eq!(addr, controller.local_addr());
 
     // Viewer connects and authenticates.
     let mut viewer = timeout(Duration::from_secs(5), session_viewer::connect(addr, code, None))
@@ -157,6 +162,7 @@ async fn switching_monitor_changes_frame_size() {
         require_manual_approval: false,
         codec: codec::preferred_codec(),
         target_fps: 30,
+        advertised_ip: Some(std::net::Ipv4Addr::LOCALHOST),
     };
     let identity = HostIdentity::generate().unwrap();
 
