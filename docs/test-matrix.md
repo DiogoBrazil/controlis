@@ -1,5 +1,9 @@
 # Matriz de testes manuais
 
+> UI atual: Tauri v2 + Leptos (webview). Os fluxos abaixo não mudam; atenção
+> extra a teclado/atalhos (agora capturados pelo browser no canvas) e à
+> fluidez do vídeo (frames JPEG via IPC → canvas).
+
 Testes automatizados cobrem protocolo, serialização, segurança, codec (dirty
 tiles), conversão de coordenadas, handshake/TOFU e o ciclo completo headless
 (`cargo test --workspace`). Esta matriz cobre o que exige display e SO reais.
