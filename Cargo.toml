@@ -11,8 +11,10 @@ members = [
     "crates/session-host",
     "crates/session-viewer",
     "crates/wayland-portal",
-    "apps/controlis",
 ]
+# The desktop app (Tauri backend + Leptos frontend) lives in apps/controlis-app
+# as its own pair of workspaces; see apps/controlis-app/src-tauri.
+exclude = ["apps/controlis-app"]
 
 [workspace.package]
 version = "0.1.0"
@@ -66,10 +68,6 @@ toml = "0.8"
 # Security
 rand = "0.8"
 subtle = "2"
-
-# UI
-eframe = { version = "0.29", default-features = false, features = ["default_fonts", "glow"] }
-egui = "0.29"
 
 # Observability / errors
 tracing = "0.1"
