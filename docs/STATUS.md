@@ -1,6 +1,6 @@
 # STATUS do Controlis — diário de evolução e pendências
 
-> Última atualização: **2026-07-08** (correções pós-teste implementadas; aguardando validação com duas máquinas).
+> Última atualização: **2026-07-08** (noite: UI migrada de egui para Tauri v2 + Leptos; antes: teclado validado, código de acesso autocontido).
 > Este arquivo é o ponto de retomada: o que está pronto, o que foi observado
 > nos testes e o que falta revisar. Complementa o `PLANO-TECNICO.md` (plano) e
 > o `TESTE-DUAS-MAQUINAS.md` (roteiro de teste).
@@ -52,7 +52,7 @@ Build no Windows funcionou de primeira:
 
 ## 3. Bugs e pendências (estado em 2026-07-08)
 
-### 3.1 ✅ Teclado no host Windows: só números e maiúsculas — CORRIGIDO (validar)
+### 3.1 ✅ Teclado no host Windows — CORRIGIDO E VALIDADO (2026-07-08)
 - Causa-raiz confirmada no fonte do enigo 0.6.1: no Windows, `Key::Unicode(c)`
   usa `VkKeyScanExW`, que retorna o VK no byte baixo e **flags de shift no byte
   alto**; o enigo montava `VIRTUAL_KEY(vk as u16)` sem mascarar nem aplicar o
@@ -63,8 +63,7 @@ Build no Windows funcionou de primeira:
   exato, independente de layout/shift — deve resolver acentos/ç também). No
   backend EIS (Linux) a impl default mantém o comportamento que já funcionava.
   `KeyEvent` ficou só para teclas nomeadas e atalhos (Ctrl+C etc.).
-- **Pendente:** validar no teste com duas máquinas (Windows host + Linux
-  viewer): minúsculas/MAIÚSCULAS, "ação já çê", símbolos !@#, Ctrl+C/V.
+- ✅ Validado pelo usuário em 2026-07-08: digitação funcionando corretamente.
 
 ### 3.2 ✅ Medição de banda do H.264 — IMPLEMENTADA (medir no teste real)
 - O host agora loga a cada ~5 s, no Registro da UI e no tracing:
@@ -94,29 +93,68 @@ Build no Windows funcionou de primeira:
   (PipeWire + EIS)" / "xcap + enigo"); fallback do portal aparece no Registro.
 - ⬜ Documentar/automatizar regra de firewall no Windows host (UDP).
 
+### 3.8 ✅ UI migrada para Tauri v2 + Leptos — 2026-07-08 (validar em 2 máquinas)
+- O app egui foi substituído por `apps/controlis-app`: frontend Leptos (CSR,
+  Trunk, tema escuro responsivo no padrão do host-deck) + backend Tauri
+  (`src-tauri`) reusando os crates de sessão sem mudanças de protocolo.
+- Vídeo no viewer: quadro decodificado → JPEG (`codec::encode_rgba_to_jpeg`)
+  → `tauri::ipc::Channel` binário → `createImageBitmap` → canvas (letterbox).
+- Input: `public/js/screen.js` captura pointer/teclado no canvas; digitação
+  vira `Text`, atalhos/teclas nomeadas viram `KeyEvent` (sem diff de
+  modificadores). `blur` solta modificadores para não prender tecla no host.
+- Dev: `cd apps/controlis-app/src-tauri && cargo tauri dev` (features
+  `real-capture`/`wayland` via `--features`). Smoke: app abre, Ctrl+C encerra
+  limpo (mesmo caminho de teardown das sessões/portal).
+- Tela do host simplificada para leigos: só código + status; porta, backend,
+  impressão digital e Registro (incl. Mbps) ficam em "Detalhes técnicos"
+  (recolhido por padrão).
+- **Pendente:** validação visual/funcional pelo usuário + teste em 2 máquinas
+  (fluidez do canvas a 1080p, teclado/atalhos pelo browser, troca de monitor).
+
+### 3.7 ✅ Código de acesso autocontido (conectar só com o código) — 2026-07-08
+- O host agora exibe UM código de 16 caracteres (`XXXX-XXXX-XXXX-XXXX`, base32
+  Crockford) que embute IP + porta + segredo de 30 bits, com 2 bits de versão
+  (preparando a Fase 8: ID de rendezvous no mesmo campo). O viewer digita só o
+  código; campo `IP:porta` virou "Avançado" (sobrepõe o endereço embutido).
+- IP detectado via crate `local-ip-address` (tabela de rotas do SO); override
+  `advertised_ip` no config.toml para máquinas com várias interfaces/VPN. Sem
+  detecção, o host avisa no Registro.
+- Sem mudança de protocolo (`AuthRequest.session_code` = código completo;
+  comparação constant-time como antes). Formato em `docs/protocol.md`;
+  implementação em `crates/security/src/connect_code.rs`.
+- **Pendente:** validar com duas máquinas (conectar só com o código; testar
+  modo avançado; conferir IP detectado na máquina com VPN, se houver).
+
 ## 4. Como retomar o ambiente de teste (resumo)
 
-- **Linux (host):**
-  `cargo build --release -p controlis --features wayland,real-capture`
+Pré-requisitos (uma vez por máquina): `rustup target add wasm32-unknown-unknown`
+e `cargo install trunk tauri-cli`; no Linux, `libwebkit2gtk-4.1-dev`.
+
+- **Linux (host):** `cd apps/controlis-app/src-tauri &&
+  cargo tauri build --features wayland,real-capture`
   depois `RUST_LOG=info ./target/release/controlis 2>&1 | tee /tmp/controlis-host.log`
-- **Windows (Git Bash, na pasta do projeto):**
-  `cargo build --release -p controlis --features real-capture`
-  depois `./target/release/controlis.exe`
-- Roteiro completo, logs a observar e firewall: `TESTE-DUAS-MAQUINAS.md`.
-- Fonte para levar a outra máquina: zipar SEM `target/` (14 GB de artefatos;
-  o fonte tem <1 MB): `zip -rq controlis-src.zip controlis -x "controlis/target/*"`.
+- **Windows (na pasta do projeto):** `cd apps/controlis-app/src-tauri &&
+  cargo tauri build --features real-capture`, depois o exe em
+  `apps/controlis-app/src-tauri/target/release/`.
+- Dev rápido na máquina local: `cargo tauri dev` (dispara o trunk sozinho).
+- Fonte para levar a outra máquina: zipar SEM os `target/` (raiz,
+  `apps/controlis-app/target` e `apps/controlis-app/src-tauri/target`) e sem
+  `apps/controlis-app/dist`.
 
 ## 5. Onde paramos exatamente
 
 O MVP LAN está **funcional de ponta a ponta nas duas direções** entre Linux
-(Wayland/GNOME 46) e Windows. Em 2026-07-08 foram implementados: o fix do
-teclado no host Windows via mensagem `Text` + `Enigo::text()` (3.1, protocolo
-v3), o log de banda no host (3.2), o endurecimento do teardown portal/EIS +
-Ctrl+C gracioso (3.3) e o indicador de backend na UI (3.6). Workspace com
-testes verdes e clippy limpo.
+(Wayland/GNOME 46) e Windows, com o teclado do host Windows e a conexão só
+com código **validados pelo usuário**. Em 2026-07-08 (noite) a **UI foi
+migrada de egui para Tauri v2 + Leptos** (item 3.8): visual moderno/responsivo,
+mesma lógica de sessão (crates intactos, testes verdes, clippy limpo nos três
+alvos — workspace raiz, src-tauri e wasm).
 
-**Próxima sessão:** repetir o teste com duas máquinas (rebuild NAS DUAS pontas
-— o protocolo subiu para v3) seguindo o checklist novo do `test-matrix.md`:
-teclado no Windows host (minúsculas/acentos/símbolos/atalhos), leitura do
-Mbps no Registro, e teardown no Linux (fechar app/Ctrl+C sem congelar o
-gnome-shell). Validado isso, começa a **Fase 8** (rendezvous/relay/NAT).
+**Próxima sessão:** validar a UI nova localmente (visual + smoke loopback com
+duas instâncias) e depois o teste com duas máquinas: fluidez do canvas a
+1080p, teclado/atalhos vindos do browser, troca de monitor, aprovação,
+Mbps no Registro e teardown no Linux (fechar janela/Ctrl+C sem congelar o
+gnome-shell). No Windows, instalar as ferramentas (`trunk`, `tauri-cli`,
+target wasm) antes do build. Validado isso, começa a **Fase 8**
+(rendezvous/relay/NAT), reusando os bits de versão do código de acesso para o
+ID de rendezvous.

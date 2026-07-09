@@ -45,6 +45,25 @@ Regras no host:
 - IP em backoff recebe `Rejected` imediato.
 - Com aprovação manual, o host aguarda a decisão do usuário antes de aceitar.
 
+### Código de acesso autocontido
+
+`AuthRequest.session_code` carrega o **código de acesso completo** exibido no
+host. O código não é só o segredo: ele embute o endereço do host, para que o
+viewer digite uma única string (sem precisar do IP separado). Formato v0:
+
+- Payload de 80 bits: versão (2 bits, `0`) + segredo CSPRNG (30 bits) +
+  IPv4 (32 bits) + porta (16 bits).
+- Codificação base32 Crockford (`0-9` + letras sem I/L/O/U) → 16 caracteres,
+  exibidos `XXXX-XXXX-XXXX-XXXX`. Leitura tolera minúsculas, separadores e as
+  confusões `O→0`, `I/L→1`.
+- Os bits de versão permitem evoluir o formato (ex.: Fase 8 — ID de rendezvous
+  no mesmo campo) sem quebrar o parse.
+- O endereço embutido não é secreto; o segredo de 30 bits, combinado com uso
+  único + backoff + aprovação manual, é a credencial. IPv6 fora de escopo.
+
+A decodificação acontece toda no viewer (`crates/security/connect_code.rs`);
+nada muda no fio além do tamanho da string.
+
 ## Controle (após aceite)
 
 | Mensagem | Direção | Observação |

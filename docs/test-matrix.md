@@ -1,5 +1,9 @@
 # Matriz de testes manuais
 
+> UI atual: Tauri v2 + Leptos (webview). Os fluxos abaixo não mudam; atenção
+> extra a teclado/atalhos (agora capturados pelo browser no canvas) e à
+> fluidez do vídeo (frames JPEG via IPC → canvas).
+
 Testes automatizados cobrem protocolo, serialização, segurança, codec (dirty
 tiles), conversão de coordenadas, handshake/TOFU e o ciclo completo headless
 (`cargo test --workspace`). Esta matriz cobre o que exige display e SO reais.
@@ -19,7 +23,9 @@ Wayland (host) entra na Fase 9.
 
 ## Checklist por combinação
 
-- [ ] Host exibe código e impressão digital; viewer conecta com código correto.
+- [ ] Host exibe código de acesso (16 chars) e impressão digital; viewer conecta
+      digitando **só o código** (sem IP).
+- [ ] Modo avançado do viewer: endereço manual sobrepõe o embutido no código.
 - [ ] Código errado é rejeitado; 5 erros disparam backoff (mensagem de espera).
 - [ ] Aprovação manual: host mostra o pedido; Aceitar/Recusar funcionam.
 - [ ] Vídeo aparece no viewer; tela parada consome banda próxima de zero.

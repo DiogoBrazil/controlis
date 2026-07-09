@@ -10,13 +10,13 @@ mod session;
 
 pub use event::{ConnectionRequest, HostCommand, HostEvent};
 
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
 
 use capture::{CaptureError, ScreenCapturer};
 use input::{InputError, InputInjector};
 use protocol::VideoCodec;
-use security::{BruteForceGuard, SessionCode};
+use security::{BruteForceGuard, ConnectCode};
 use tokio::sync::mpsc;
 use transport::{HostIdentity, HostListener};
 
@@ -37,6 +37,10 @@ pub struct HostConfig {
     /// viewer's advertised support, falling back to JPEG tiles.
     pub codec: VideoCodec,
     pub target_fps: u32,
+    /// LAN IPv4 embedded in the access code shown to the user (the bind address
+    /// is usually `0.0.0.0` and says nothing about how peers reach this host).
+    /// `None` falls back to loopback, which only works for same-machine tests.
+    pub advertised_ip: Option<Ipv4Addr>,
 }
 
 impl Default for HostConfig {
@@ -46,6 +50,7 @@ impl Default for HostConfig {
             require_manual_approval: true,
             codec: VideoCodec::JpegTiles,
             target_fps: 20,
+            advertised_ip: None,
         }
     }
 }
@@ -82,6 +87,12 @@ impl HostController {
         let _ = self.commands.send(command);
     }
 
+    /// A clonable command sender, for UIs where the controller itself is owned
+    /// by an event-pump task.
+    pub fn command_sender(&self) -> mpsc::UnboundedSender<HostCommand> {
+        self.commands.clone()
+    }
+
     /// The host's certificate fingerprint, for the user to read aloud.
     pub fn fingerprint(&self) -> &str {
         &self.fingerprint
@@ -107,9 +118,15 @@ pub fn start(
     let (event_tx, event_rx) = mpsc::unbounded_channel();
     let (command_tx, command_rx) = mpsc::unbounded_channel();
 
+    let advertised_addr = SocketAddrV4::new(
+        config.advertised_ip.unwrap_or(Ipv4Addr::LOCALHOST),
+        local_addr.port(),
+    );
+
     tokio::spawn(run(
         config,
         listener,
+        advertised_addr,
         capturer_factory,
         injector_factory,
         event_tx,
@@ -127,6 +144,7 @@ pub fn start(
 async fn run(
     config: HostConfig,
     listener: HostListener,
+    advertised_addr: SocketAddrV4,
     capturer_factory: CapturerFactory,
     injector_factory: InjectorFactory,
     event_tx: mpsc::UnboundedSender<HostEvent>,
@@ -135,7 +153,7 @@ async fn run(
     let mut guard = BruteForceGuard::new();
 
     loop {
-        let code = SessionCode::generate();
+        let code = ConnectCode::generate(advertised_addr);
         if event_tx.send(HostEvent::CodeReady(code.as_str().to_string())).is_err() {
             return;
         }

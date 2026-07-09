@@ -1,0 +1,48 @@
+[package]
+name = "controlis"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+
+# Own workspace, separate from the Leptos frontend and from the root crates
+# workspace (which the path dependencies below still belong to).
+[workspace]
+
+[lib]
+name = "controlis_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[features]
+# H.264 via OpenH264, compiled from source (needs a C++ compiler). On by
+# default; sessions fall back to JPEG tiles when a peer lacks it.
+default = ["h264"]
+h264 = ["codec/h264"]
+# Forwarded to the capture crate to enable the real xcap backend (needs system
+# PipeWire dev libraries on Linux).
+real-capture = ["capture/xcap-backend"]
+# Wayland host backend: capture + input via xdg-desktop-portal + PipeWire.
+wayland = ["dep:wayland-portal", "wayland-portal/enabled"]
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1.42", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+local-ip-address = "0.6.13"
+
+protocol = { path = "../../../crates/protocol" }
+session-host = { path = "../../../crates/session-host" }
+session-viewer = { path = "../../../crates/session-viewer" }
+capture = { path = "../../../crates/capture" }
+input = { path = "../../../crates/input" }
+codec = { path = "../../../crates/codec" }
+security = { path = "../../../crates/security" }
+storage = { path = "../../../crates/storage" }
+transport = { path = "../../../crates/transport" }
+wayland-portal = { path = "../../../crates/wayland-portal", optional = true }

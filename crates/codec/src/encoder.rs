@@ -150,7 +150,7 @@ fn extract_tile(frame: &RgbaFrame, rect: &TileRect) -> Vec<u8> {
     out
 }
 
-fn encode_jpeg(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, CodecError> {
+pub(crate) fn encode_jpeg(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, CodecError> {
     let mut out = Vec::new();
     let encoder = Encoder::new(&mut out, JPEG_QUALITY);
     encoder

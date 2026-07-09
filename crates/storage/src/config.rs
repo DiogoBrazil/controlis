@@ -14,6 +14,11 @@ pub struct Config {
     pub require_manual_approval: bool,
     /// Minutes before an unused session code expires.
     pub session_code_ttl_minutes: u64,
+    /// IPv4 embedded in the host's access code. Leave unset to auto-detect the
+    /// LAN address; set it explicitly on machines with several interfaces
+    /// (VPNs, virtual adapters) when detection picks the wrong one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub advertised_ip: Option<std::net::Ipv4Addr>,
 }
 
 impl Default for Config {
@@ -22,6 +27,7 @@ impl Default for Config {
             host_port: 21118,
             require_manual_approval: true,
             session_code_ttl_minutes: 10,
+            advertised_ip: None,
         }
     }
 }
@@ -63,6 +69,7 @@ mod tests {
         let cfg = Config {
             host_port: 30000,
             require_manual_approval: false,
+            advertised_ip: Some(std::net::Ipv4Addr::new(192, 168, 0, 10)),
             ..Config::default()
         };
         cfg.save(&path).unwrap();

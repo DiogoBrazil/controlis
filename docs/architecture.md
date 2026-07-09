@@ -7,10 +7,36 @@
   entregam `MediaMessage` a uma task async por canal.
 - Injeção de input roda em outra **thread dedicada** (os handles do enigo não são
   `Send` e devem viver em uma única thread); recebe ações por canal.
-- A UI (egui) roda na thread principal e nunca toca em rede/captura diretamente —
-  só troca mensagens via os handles das sessões.
+- A UI nunca toca em rede/captura diretamente — só troca mensagens via os
+  handles das sessões.
 
 Esse desacoplamento mantém host, viewer, transporte, codec e UI independentes.
+
+## UI (Tauri v2 + Leptos)
+
+O app desktop (`apps/controlis-app`) é um webview Tauri com frontend Leptos
+(CSR, compilado para wasm via Trunk). Dois workspaces: o crate `controlis-ui`
+(frontend) e `src-tauri` (backend, que depende dos crates de sessão).
+
+- **Comandos** (`src-tauri/src/commands/`): `start_host`/`host_command`/
+  `stop_host` e `connect_viewer`/`viewer_input`/`viewer_select_monitor`/
+  `viewer_disconnect`. O frontend chama via `window.__TAURI__.core.invoke`
+  (`withGlobalTauri`).
+- **Eventos** fluem por `tauri::ipc::Channel`: um canal JSON de status por
+  sessão (eventos do host/viewer) e, no viewer, um **canal binário de frames**
+  — o backend decodifica o vídeo da sessão como sempre (H.264/tiles), re-encoda
+  cada quadro composto em JPEG (`codec::encode_rgba_to_jpeg`) numa thread
+  dedicada e envia os bytes; o JS desenha no canvas via `createImageBitmap`
+  (decodificação nativa do navegador), com letterbox.
+- **Input**: `public/js/screen.js` captura pointer/teclado no canvas
+  (coordenadas normalizadas à área útil da imagem) e invoca `viewer_input`;
+  `src-tauri/src/input_map.rs` traduz para o protocolo — digitação vira `Text`,
+  teclas nomeadas/modificadores/atalhos viram `KeyEvent` (o browser entrega
+  keydown/keyup explícitos de Shift/Ctrl/…, sem diff de modificadores).
+- **Ciclo de vida**: os pumps de evento são donos de `HostController`/
+  `ViewerHandle`; os comandos usam senders clonados. `RunEvent::Exit` (fechar a
+  janela ou Ctrl+C via `tokio::signal`) dropa as sessões e o keepalive do
+  portal Wayland, preservando o teardown limpo (EIS disconnect + ack do portal).
 
 ## Fluxo do host (uma sessão por vez, no MVP)
 

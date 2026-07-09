@@ -49,6 +49,12 @@ impl ViewerHandle {
         let _ = self.input.send(message);
     }
 
+    /// A clonable input sender, for UIs where the handle itself is owned by an
+    /// event-pump task.
+    pub fn input_sender(&self) -> mpsc::UnboundedSender<ControlMessage> {
+        self.input.clone()
+    }
+
     /// Receives the next status event, or `None` when the session has ended.
     pub async fn next_event(&mut self) -> Option<ViewerEvent> {
         self.events.recv().await

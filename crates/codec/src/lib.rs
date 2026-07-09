@@ -60,6 +60,14 @@ pub const fn preferred_codec() -> VideoCodec {
     supported_codecs()[0]
 }
 
+/// Compresses a decoded frame to a standalone JPEG image.
+///
+/// Used by UI layers that display frames outside the session pipeline (e.g.
+/// pushing quadros to a webview canvas, which decodes JPEG natively).
+pub fn encode_rgba_to_jpeg(frame: &RgbaFrame) -> Result<Vec<u8>, CodecError> {
+    encoder::encode_jpeg(&frame.data, frame.width, frame.height)
+}
+
 /// Encoder for a session's negotiated codec.
 #[derive(Debug)]
 pub enum VideoEncoder {
