@@ -1,0 +1,21 @@
+[Unit]
+Description=iroh-relay (relay self-host do Controlis)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/iroh-relay --config-path /etc/iroh-relay/config.toml
+Restart=on-failure
+RestartSec=5
+# Permite bind nas portas 80/443 sem rodar como root.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+DynamicUser=yes
+StateDirectory=iroh-relay
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target

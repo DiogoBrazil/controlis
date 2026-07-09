@@ -1,0 +1,20 @@
+[Unit]
+Description=controlis-server (rendezvous HTTP do Controlis)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Exposto direto em http (o app aceita http:// no rendezvous_url; a identidade
+# do host é protegida pelo pinning TOFU). TLS aqui é hardening futuro.
+Environment=CONTROLIS_SERVER_BIND=0.0.0.0:8080
+ExecStart=/usr/local/bin/controlis-server
+Restart=on-failure
+RestartSec=5
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target
