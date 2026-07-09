@@ -6,7 +6,10 @@ Aplicativo desktop de acesso remoto em Rust. Um único binário com dois modos:
 - **Viewer** — este computador controla outro (exibe a tela e envia mouse/teclado).
 
 Conexão direta na LAN, cifrada fim a fim com QUIC/TLS 1.3, autenticação por código
-de sessão de uso único e aprovação manual no host. Sem servidor externo no MVP.
+de sessão de uso único e aprovação manual no host. Fora da LAN (Fase 8), a conexão
+usa **Iroh** com rendezvous e relay **self-host** opcionais (ver
+[`deploy/README.md`](deploy/README.md)) — o tráfego continua cifrado de ponta a
+ponta; o servidor nunca vê a tela.
 
 Veja o planejamento completo em [`PLANO-TECNICO.md`](PLANO-TECNICO.md).
 
@@ -93,9 +96,8 @@ não sair corretos (dependem de níveis de modificador que o viewer não envia);
 suporte a EIS varia entre compositores (validado no GNOME 46). O modo sintético
 padrão continua sendo o caminho para exercitar o ciclo completo sem hardware.
 
-A injeção de mouse/teclado usa `enigo` (SendInput no Windows, XTest no X11). No
-Wayland nativo a injeção depende do portal RemoteDesktop e ainda não faz parte
-deste MVP (ver Fase 9 do plano).
+A injeção de mouse/teclado usa `enigo` (SendInput no Windows, XTest no X11) ou,
+no Wayland nativo, libei/EIS via portal (feature `wayland`, validada no GNOME 46).
 
 ## Testes
 
@@ -121,14 +123,18 @@ crates/
   input/           trait InputInjector (backend enigo) + coordenadas normalizadas
   codec/           encode/decode: H.264 (OpenH264) e dirty tiles + JPEG
   security/        código de sessão, rate limiting/backoff, comparação constant-time
-  storage/         config TOML + SQLite (logs de conexão, peers conhecidos)
+  rendezvous/      DTOs e cliente HTTP do rendezvous + regras do store (Fase 8)
+  storage/         config TOML + SQLite (logs de conexão, peers/hosts conhecidos)
   session-host/    orquestração do host (auth, captura→envio, aplicar input)
   session-viewer/  orquestração do viewer (auth, receber/decodificar, enviar input)
   wayland-portal/  backend Wayland: portal (ashpd) + PipeWire (feature `enabled`)
 apps/
   controlis-app/   app desktop: frontend Leptos (CSR/wasm) + backend Tauri em
                    src-tauri (comandos, canais de eventos/frames, seleção de backend)
-docs/              protocolo, arquitetura, matriz de testes
+servers/
+  controlis-server/ rendezvous HTTP (Axum) para VPS/self-host (Fase 8)
+deploy/            templates de deploy do VPS (iroh-relay + rendezvous + systemd)
+docs/              protocolo, arquitetura, matriz de testes, STATUS (diário)
 ```
 
 ## Segurança

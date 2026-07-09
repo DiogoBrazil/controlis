@@ -1,6 +1,8 @@
 # STATUS do Controlis — diário de evolução e pendências
 
-> Última atualização: **2026-07-08** (noite: Fase 8 pronta para teste com Iroh + relay self-host; antes: UI migrada de egui para Tauri v2 + Leptos, teclado validado, código de acesso autocontido).
+> Última atualização: **2026-07-09** (smoke loopback da UI Tauri VALIDADO com
+> teardown limpo; logging do viewer implementado; templates de deploy do VPS
+> prontos em `deploy/`; plano de testes aprovado — ver seção 5).
 > Este arquivo é o ponto de retomada: o que está pronto, o que foi observado
 > nos testes e o que falta revisar. Complementa o `PLANO-TECNICO.md` (plano) e
 > o `TESTE-DUAS-MAQUINAS.md` (roteiro de teste).
@@ -50,6 +52,50 @@ Build no Windows funcionou de primeira:
 | **Linux host + Windows viewer** | ✅ | ✅ | ✅ tudo funcionou |
 | **Windows host + Linux viewer** | ✅ | ✅ | ⚠️ **BUG: só números e letras maiúsculas** |
 
+## 2.5 Sessão de 2026-07-09 — smoke loopback da UI Tauri + preparação dos testes
+
+### 2.5.1 ✅ Smoke loopback da UI Tauri (item 3.8) — VALIDADO
+- Duas instâncias na mesma máquina, isoladas por `XDG_CONFIG_HOME`/`XDG_DATA_HOME`
+  (o `AppPaths` usa `directories::ProjectDirs`, que respeita essas variáveis —
+  técnica útil para testar host+viewer localmente sem brigar pelo SQLite).
+- Fluxo completo OK: código de acesso → aprovação → vídeo H.264 no canvas
+  (1920x1080) → TOFU fixado → desconexão.
+- **Teardown limpo confirmado 2x** (exit code 0 nas duas instâncias, nenhum
+  processo restante, journal sem erros de mutter/gnome-shell/pipewire).
+  O freeze do gnome-shell (2.2) NÃO reapareceu → pendência 3.3 validada
+  neste cenário (falta confirmar no teste longo entre máquinas).
+- ⚠️ Observado: encoder entrega **~19–20 fps** parado e ~16–18 fps com
+  movimento (0.5–0.7 Mbps — banda muito abaixo do teto de 4 Mbps). O alvo da
+  Fase 7 é 30 fps; investigar (suspeitos: pacing da captura PipeWire ou o
+  FRAME_POLL de 15 ms do pump). Não bloqueia os testes.
+
+### 2.5.2 ✅ Etapa 0 do plano — logging do viewer (commit 477968f)
+- O viewer não emitia NENHUM log. Agora loga a jornada completa: alvo
+  resolvido (LAN/internet) → transporte estabelecido (QUIC com fingerprint /
+  Iroh com endpoint) → aguardando aprovação → sessão aceita → monitores →
+  TOFU fixado → primeiro frame (com resolução) → desconexão/erros.
+- **Causa do silêncio encontrada:** o filtro default era `controlis=info,warn`,
+  mas o lib crate do Tauri se chama `controlis_lib` — o filtro nunca casou com
+  o backend. Corrigido: default agora cobre `controlis_lib`, `session_viewer`,
+  `session_host`, `transport`, `rendezvous` e `wayland_portal` em info, sem
+  precisar de `RUST_LOG`.
+- Validado em loopback SEM `RUST_LOG` no ambiente.
+
+### 2.5.3 ✅ Templates de deploy do VPS (commit ddf2bae, pasta `deploy/`)
+- `deploy/README.md` — passo a passo completo do VPS; `deploy/iroh-relay.toml`
+  (schema conferido contra o fonte do iroh-relay **v1.0.2**, a mesma família do
+  cliente); units systemd para os dois serviços.
+- **Decisões de arquitetura registradas:**
+  - O `iroh-relay` 1.x NÃO tem mais STUN — descoberta de endereço é via QUIC
+    na porta **7824/udp** (`enable_quic_addr_discovery`).
+  - O relay é dono das portas **80/443** (ACME/Let's Encrypt embutido:
+    `cert_mode = "LetsEncrypt"`). Por isso NÃO há Caddy/proxy na frente.
+  - O rendezvous (`controlis-server`) fica em `http://...:8080` sem TLS neste
+    primeiro deploy (o cliente aceita `http://`; a identidade do host é
+    protegida pelo pinning TOFU). TLS no rendezvous = hardening futuro.
+  - Portas do firewall do VPS: 80/tcp, 443/tcp, 7824/udp, 8080/tcp.
+- Requisito do usuário confirmado: há VPS **com domínio** disponível.
+
 ## 3. Bugs e pendências (estado em 2026-07-08)
 
 ### 3.1 ✅ Teclado no host Windows — CORRIGIDO E VALIDADO (2026-07-08)
@@ -76,7 +122,9 @@ Build no Windows funcionou de primeira:
   antes de deixar o processo morrer — sem sessão pendurada no compositor.
 - Ctrl+C: tratado via `tokio::signal` → fecha a janela graciosamente → o drop
   chain (sessões → portal → EIS) roda por inteiro. Panics já faziam unwind.
-- **Pendente:** validar que o freeze do mutter (2.2) não reaparece.
+- ✅ **Validado em 2026-07-09** no smoke loopback (2 ciclos completos de sessão
+  portal + encerramento, sem freeze, journal limpo — ver 2.5.1). Resta observar
+  em sessões longas entre máquinas.
 
 ### 3.4 Limitações conhecidas do teclado EIS (Linux host)
 - AltGr, dead-keys e acentos compostos ainda não suportados
@@ -130,7 +178,13 @@ Build no Windows funcionou de primeira:
 ### 3.6 Melhorias de UX/robustez
 - ✅ A UI do host agora mostra o backend ativo ("Backend: Wayland portal
   (PipeWire + EIS)" / "xcap + enigo"); fallback do portal aparece no Registro.
-- ⬜ Documentar/automatizar regra de firewall no Windows host (UDP).
+- ⬜ Documentar/automatizar regra de firewall no Windows host (UDP). Comando a
+  testar na Etapa 1 (PowerShell admin): `netsh advfirewall firewall add rule
+  name="Controlis" dir=in action=allow protocol=UDP localport=21118`.
+- ⬜ **fps abaixo do alvo:** encoder a ~19–20 fps (alvo 30) no smoke loopback a
+  1080p (ver 2.5.1). Confirmar se persiste entre máquinas e investigar
+  (pacing PipeWire? `FRAME_POLL` 15 ms do pump do viewer?).
+- ⬜ TLS no rendezvous (hoje `http://:8080`; ver decisão em 2.5.3).
 
 ### 3.8 ✅ UI migrada para Tauri v2 + Leptos — 2026-07-08 (validar em 2 máquinas)
 - O app egui foi substituído por `apps/controlis-app`: frontend Leptos (CSR,
@@ -147,8 +201,10 @@ Build no Windows funcionou de primeira:
 - Tela do host simplificada para leigos: só código + status; porta, backend,
   impressão digital e Registro (incl. Mbps) ficam em "Detalhes técnicos"
   (recolhido por padrão).
-- **Pendente:** validação visual/funcional pelo usuário + teste em 2 máquinas
-  (fluidez do canvas a 1080p, teclado/atalhos pelo browser, troca de monitor).
+- ✅ **Smoke loopback validado em 2026-07-09** (ver 2.5.1): visual, código,
+  aprovação, vídeo e teardown OK na mesma máquina.
+- **Pendente:** teste em 2 máquinas (fluidez do canvas a 1080p, teclado/atalhos
+  pelo browser, troca de monitor) — é a Etapa 1 do plano (seção 5).
 
 ### 3.7 ✅ Código de acesso autocontido (conectar só com o código) — 2026-07-08
 - O host agora exibe UM código de 16 caracteres (`XXXX-XXXX-XXXX-XXXX`, base32
@@ -166,51 +222,78 @@ Build no Windows funcionou de primeira:
 
 ## 4. Como retomar o ambiente de teste (resumo)
 
-Pré-requisitos (uma vez por máquina): Rust 1.91+, `rustup target add wasm32-unknown-unknown`
-e `cargo install trunk tauri-cli`; no Linux, `libwebkit2gtk-4.1-dev`.
+Pré-requisitos (uma vez por máquina): Rust 1.91+, `rustup target add
+wasm32-unknown-unknown` e `cargo install trunk tauri-cli --locked`; no Linux,
+`libwebkit2gtk-4.1-dev`.
 
-Para teste internet, configure nas duas máquinas:
+- **Linux:** binário release JÁ COMPILADO com o logging novo em
+  `apps/controlis-app/src-tauri/target/release/controlis`
+  (build: `cd apps/controlis-app/src-tauri && cargo tauri build --features
+  wayland,real-capture --no-bundle`). Rodar com
+  `RUST_LOG=info ./target/release/controlis 2>&1 | tee /tmp/controlis.log`.
+- **Windows:** `git clone`/`git pull` da branch `development` (NÃO zipar —
+  o repo está em github.com/DiogoBrazil/controlis), depois
+  `cd apps\controlis-app\src-tauri && cargo tauri build --features
+  real-capture --no-bundle`. Sem console no release: diagnóstico pela UI
+  (Registro em "Detalhes técnicos").
+- Smoke local com 2 instâncias na MESMA máquina: exportar
+  `XDG_CONFIG_HOME`/`XDG_DATA_HOME` distintos por instância (ver 2.5.1).
+- **VPS (Fase 8):** passo a passo completo em `deploy/README.md`
+  (iroh-relay com ACME em 80/443 + QUIC 7824/udp; rendezvous em 8080/tcp).
+  Config das duas máquinas (`~/.config/controlis/config.toml` no Linux,
+  `%APPDATA%\controlis\controlis\config\config.toml` no Windows):
 
 ```toml
-rendezvous_url = "https://SEU-VPS:8080"
-relay_url = "https://SEU-RELAY"
+rendezvous_url = "http://rdv.SEUDOMINIO:8080"
+relay_url = "https://relay.SEUDOMINIO"
 ```
 
-No VPS, rode o rendezvous com:
+## 5. Onde paramos exatamente (2026-07-09) e o que falta
 
-```bash
-CONTROLIS_SERVER_BIND=0.0.0.0:8080 cargo run -p controlis-server
-```
+**Funcionando e validado até aqui:**
+- MVP LAN ponta a ponta nas duas direções (Linux Wayland ↔ Windows), teclado
+  do host Windows e código autocontido validados (2026-07-08, na UI egui).
+- UI nova Tauri v2 + Leptos: smoke loopback validado (2.5.1), com teardown
+  limpo (sem freeze do gnome-shell) e H.264 fluindo.
+- Logging do viewer completo (2.5.2) — pronto para diagnosticar teste remoto.
+- Fase 8 implementada com testes locais verdes; deploy do VPS documentado e
+  templetizado em `deploy/` (2.5.3) — **nunca testada fora da LAN**.
 
-Rode o `iroh-relay` como processo separado apontando para o mesmo host/URL
-publicado em `relay_url`.
+**Plano de testes aprovado** (detalhe em `~/.claude/plans/dazzling-tumbling-hickey.md`,
+resumo abaixo). Sequência: cada etapa isola uma variável nova.
 
-- **Linux (host):** `cd apps/controlis-app/src-tauri &&
-  cargo tauri build --features wayland,real-capture`
-  depois `RUST_LOG=info ./target/release/controlis 2>&1 | tee /tmp/controlis-host.log`
-- **Windows (na pasta do projeto):** `cd apps/controlis-app/src-tauri &&
-  cargo tauri build --features real-capture`, depois o exe em
-  `apps/controlis-app/src-tauri/target/release/`.
-- Dev rápido na máquina local: `cargo tauri dev` (dispara o trunk sozinho).
-- Fonte para levar a outra máquina: zipar SEM os `target/` (raiz,
-  `apps/controlis-app/target` e `apps/controlis-app/src-tauri/target`) e sem
-  `apps/controlis-app/dist`.
+**➡️ PRÓXIMO PASSO — Etapa 1: teste LAN com 2 máquinas (UI nova).**
+Preparo do Windows: git pull + `rustup target add wasm32-unknown-unknown` +
+`cargo install trunk tauri-cli --locked` + build (seção 4). Roteiro nas DUAS
+direções (checklist completo em `docs/test-matrix.md`):
+1. Conectar só com o código; depois modo Avançado com IP manual.
+2. Aprovação manual; fluidez do canvas a 1080p.
+3. Teclado via browser (novo na UI Tauri): "ação já çê", símbolos com shift,
+   Ctrl+C/V, Alt+Tab, Shift+setas.
+4. Troca de monitor ao vivo.
+5. **Medição da Fase 7:** movimento contínuo ~10 s → anotar `mídia (H264):
+   X Mbps, Y fps` (aceite < 4 Mbps; anotar fps real — ver pendência 19 fps).
+6. TOFU: reconexão passa; apagar `host_cert.der`/`host_key.der` no host →
+   viewer deve BLOQUEAR por identidade alterada.
+7. Robustez: derrubar Wi-Fi no meio → host volta a "aguardando", nenhuma
+   tecla presa. Firewall UDP 21118 quando Windows for host (comando em 3.6).
 
-## 5. Onde paramos exatamente
+**Etapa 2 — VPS (pode ser feita em paralelo, não depende das 2 máquinas):**
+seguir `deploy/README.md`: DNS `relay.SEUDOMINIO` → IP do VPS; instalar
+`iroh-relay` (`cargo install iroh-relay --features server --locked`) com
+`deploy/iroh-relay.toml` (editar domínio) + unit systemd; build do
+`controlis-server` no VPS + unit; liberar 80/tcp, 443/tcp, 7824/udp, 8080/tcp.
+Smoke: `curl http://rdv.SEUDOMINIO:8080/healthz` → `ok`; TLS válido em
+`https://relay.SEUDOMINIO`.
 
-O MVP LAN está **funcional de ponta a ponta nas duas direções** entre Linux
-(Wayland/GNOME 46) e Windows, com o teclado do host Windows e a conexão só
-com código **validados pelo usuário**. Em 2026-07-08 (noite) a **UI foi
-migrada de egui para Tauri v2 + Leptos** (item 3.8): visual moderno/responsivo,
-mesma lógica de sessão LAN. A Fase 8 agora adiciona o caminho internet por
-Iroh/rendezvous sem remover o caminho LAN.
+**Etapa 3 — teste internet (Fase 8), depois das etapas 1 e 2:**
+`config.toml` das duas máquinas com `rendezvous_url`/`relay_url` (seção 4);
+host mostra código v1 e loga "internet ativo"; primeiro teste ainda na LAN
+(menos variáveis), depois viewer em rede diferente (ex.: hotspot 4G) conecta
+só com o código; TOFU internet (reconexão passa, identidade divergente
+bloqueia); `relay_url` inválido → host loga fallback e volta ao código LAN;
+código v1 + endereço manual avançado ainda conecta por LAN.
 
-**Próxima sessão:** validar a UI nova localmente (visual + smoke loopback com
-duas instâncias) e depois o teste com duas máquinas: fluidez do canvas a
-1080p, teclado/atalhos vindos do browser, troca de monitor, aprovação,
-Mbps no Registro, TOFU persistente (reconexão passa; certificado trocado
-bloqueia) e teardown no Linux (fechar janela/Ctrl+C sem congelar o
-gnome-shell). No Windows, instalar as ferramentas (`trunk`, `tauri-cli`,
-target wasm) antes do build. Para a **Fase 8**, o próximo passo é o teste real:
-VPS com `controlis-server` + `iroh-relay`, `config.toml` preenchido nas duas
-máquinas e conexão fora da LAN usando só o código.
+**Para concluir o ciclo atual (depois das etapas):** registrar resultados e
+Mbps/fps aqui no STATUS, marcar a `test-matrix.md`, decidir sobre o fps ~19
+(3.6) e o TLS do rendezvous (3.6), e fechar o aceite da Fase 7.
