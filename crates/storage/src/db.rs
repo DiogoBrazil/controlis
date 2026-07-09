@@ -20,6 +20,18 @@ pub struct KnownPeer {
     pub nickname: String,
 }
 
+/// A remote target whose host certificate fingerprint has been pinned.
+///
+/// `peer_key` is intentionally transport-facing instead of certificate-facing:
+/// LAN currently uses `lan:<ip:port>`, and the rendezvous phase can reuse the
+/// same table with keys such as `rendezvous:<id>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KnownHost {
+    pub peer_key: String,
+    pub fingerprint: String,
+    pub nickname: String,
+}
+
 /// SQLite-backed store for logs and known peers.
 #[derive(Debug)]
 pub struct Store {
@@ -53,6 +65,13 @@ impl Store {
                  fingerprint TEXT PRIMARY KEY,
                  nickname TEXT NOT NULL,
                  first_seen INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+             );
+             CREATE TABLE IF NOT EXISTS known_host (
+                 peer_key TEXT PRIMARY KEY,
+                 fingerprint TEXT NOT NULL,
+                 nickname TEXT NOT NULL,
+                 first_seen INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+                 last_seen INTEGER NOT NULL DEFAULT (strftime('%s','now'))
              );",
         )?;
         Ok(Self { conn })
@@ -116,6 +135,38 @@ impl Store {
         )?;
         Ok(())
     }
+
+    /// Looks up a pinned host identity by target key.
+    pub fn known_host(&self, peer_key: &str) -> Result<Option<KnownHost>, StorageError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT peer_key, fingerprint, nickname FROM known_host WHERE peer_key = ?1",
+        )?;
+        let mut rows = stmt.query_map([peer_key], |row| {
+            Ok(KnownHost {
+                peer_key: row.get(0)?,
+                fingerprint: row.get(1)?,
+                nickname: row.get(2)?,
+            })
+        })?;
+        match rows.next() {
+            Some(host) => Ok(Some(host?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Inserts or updates a pinned host identity, refreshing `last_seen`.
+    pub fn remember_host(&self, host: &KnownHost) -> Result<(), StorageError> {
+        self.conn.execute(
+            "INSERT INTO known_host (peer_key, fingerprint, nickname)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(peer_key) DO UPDATE SET
+                 fingerprint = excluded.fingerprint,
+                 nickname = excluded.nickname,
+                 last_seen = strftime('%s','now')",
+            rusqlite::params![host.peer_key, host.fingerprint, host.nickname],
+        )?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -159,6 +210,40 @@ mod tests {
                 nickname: "renamed".into(),
             })
             .unwrap();
-        assert_eq!(store.known_peer("ab:cd").unwrap().unwrap().nickname, "renamed");
+        assert_eq!(
+            store.known_peer("ab:cd").unwrap().unwrap().nickname,
+            "renamed"
+        );
+    }
+
+    #[test]
+    fn known_host_upsert_and_lookup_by_target_key() {
+        let store = Store::in_memory().unwrap();
+        assert!(store
+            .known_host("lan:192.168.0.10:21118")
+            .unwrap()
+            .is_none());
+
+        store
+            .remember_host(&KnownHost {
+                peer_key: "lan:192.168.0.10:21118".into(),
+                fingerprint: "AA:BB".into(),
+                nickname: "LAN 192.168.0.10:21118".into(),
+            })
+            .unwrap();
+        let found = store.known_host("lan:192.168.0.10:21118").unwrap().unwrap();
+        assert_eq!(found.fingerprint, "AA:BB");
+        assert_eq!(found.nickname, "LAN 192.168.0.10:21118");
+
+        store
+            .remember_host(&KnownHost {
+                peer_key: "lan:192.168.0.10:21118".into(),
+                fingerprint: "CC:DD".into(),
+                nickname: "renamed".into(),
+            })
+            .unwrap();
+        let updated = store.known_host("lan:192.168.0.10:21118").unwrap().unwrap();
+        assert_eq!(updated.fingerprint, "CC:DD");
+        assert_eq!(updated.nickname, "renamed");
     }
 }

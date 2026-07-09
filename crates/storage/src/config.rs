@@ -19,6 +19,12 @@ pub struct Config {
     /// (VPNs, virtual adapters) when detection picks the wrong one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub advertised_ip: Option<std::net::Ipv4Addr>,
+    /// Rendezvous server base URL used for internet sessions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rendezvous_url: Option<String>,
+    /// Self-hosted Iroh relay URL used for internet sessions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relay_url: Option<String>,
 }
 
 impl Default for Config {
@@ -28,6 +34,8 @@ impl Default for Config {
             require_manual_approval: true,
             session_code_ttl_minutes: 10,
             advertised_ip: None,
+            rendezvous_url: None,
+            relay_url: None,
         }
     }
 }
@@ -70,6 +78,8 @@ mod tests {
             host_port: 30000,
             require_manual_approval: false,
             advertised_ip: Some(std::net::Ipv4Addr::new(192, 168, 0, 10)),
+            rendezvous_url: Some("https://controlis.example.test".into()),
+            relay_url: Some("https://relay.example.test".into()),
             ..Config::default()
         };
         cfg.save(&path).unwrap();

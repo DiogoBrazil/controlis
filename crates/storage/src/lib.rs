@@ -9,7 +9,7 @@ mod db;
 mod paths;
 
 pub use config::Config;
-pub use db::{ConnectionLog, KnownPeer, Store};
+pub use db::{ConnectionLog, KnownHost, KnownPeer, Store};
 pub use paths::AppPaths;
 
 /// Errors from configuration or database access.
