@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
-use session_host::{HostCommand, HostConfig, HostEvent};
+use session_host::{HostCommand, HostConfig, HostEvent, InternetHostConfig};
 use storage::{ConnectionLog, Store};
 use tauri::ipc::Channel;
 use tauri::State;
@@ -48,14 +48,32 @@ pub struct HostInfo {
 
 /// Events streamed to the webview while the host runs.
 #[derive(Debug, Clone, Serialize)]
-#[serde(tag = "event", content = "data", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "event",
+    content = "data",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum HostUiEvent {
-    CodeReady { code: String },
-    ApprovalRequested { peer_addr: String, fingerprint: Option<String> },
-    SessionStarted { peer_addr: String },
-    SessionEnded { reason: String },
-    Log { line: String },
-    Error { message: String },
+    CodeReady {
+        code: String,
+    },
+    ApprovalRequested {
+        peer_addr: String,
+        fingerprint: Option<String>,
+    },
+    SessionStarted {
+        peer_addr: String,
+    },
+    SessionEnded {
+        reason: String,
+    },
+    Log {
+        line: String,
+    },
+    Error {
+        message: String,
+    },
     Stopped,
 }
 
@@ -74,6 +92,7 @@ pub async fn start_host(
         require_manual_approval: env.config.require_manual_approval,
         codec: codec::preferred_codec(),
         advertised_ip,
+        internet: internet_config(&env),
         ..HostConfig::default()
     };
 
@@ -84,9 +103,13 @@ pub async fn start_host(
         .await
         .map_err(|e| e.to_string())?;
 
-    let controller =
-        session_host::start(host_config, env.identity.clone(), backend.capturer, backend.injector)
-            .map_err(|e| format!("falha ao iniciar o host: {e}"))?;
+    let controller = session_host::start(
+        host_config,
+        env.identity.clone(),
+        backend.capturer,
+        backend.injector,
+    )
+    .map_err(|e| format!("falha ao iniciar o host: {e}"))?;
 
     if let Some(line) = backend.fallback {
         let _ = on_event.send(HostUiEvent::Log { line });
@@ -112,8 +135,21 @@ pub async fn start_host(
         _keepalive: backend.keepalive,
     });
 
-    tokio::spawn(pump_events(controller, on_event, shutdown_rx, env.db_path.clone()));
+    tokio::spawn(pump_events(
+        controller,
+        on_event,
+        shutdown_rx,
+        env.db_path.clone(),
+    ));
     Ok(info)
+}
+
+fn internet_config(env: &AppEnv) -> Option<InternetHostConfig> {
+    Some(InternetHostConfig {
+        rendezvous_url: env.config.rendezvous_url.as_ref()?.clone(),
+        relay_url: env.config.relay_url.as_ref()?.clone(),
+        secret_key: env.iroh_secret_key.clone(),
+    })
 }
 
 /// Owns the controller for the host's lifetime: forwards events to the webview
