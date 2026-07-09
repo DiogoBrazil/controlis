@@ -103,12 +103,17 @@ pub async fn connect(
     code: String,
     expected: Option<Fingerprint>,
 ) -> Result<ViewerHandle, ViewerError> {
+    tracing::info!("viewer: conectando ao host {addr} (LAN, pin conhecido: {})", expected.is_some());
     let seen: transport::SeenFingerprint = Arc::new(Mutex::new(None));
     let connection = connect_viewer(addr, expected, seen.clone()).await?;
     let fingerprint = seen
         .lock()
         .ok()
         .and_then(|f| f.as_ref().map(|f| f.to_string()));
+    tracing::info!(
+        "viewer: transporte QUIC estabelecido com {addr} (fingerprint {})",
+        fingerprint.as_deref().unwrap_or("desconhecida")
+    );
     connect_over(connection, code, fingerprint).await
 }
 
@@ -118,8 +123,16 @@ pub async fn connect_internet(
     descriptor: IrohEndpointDescriptor,
     code: String,
 ) -> Result<ViewerHandle, ViewerError> {
+    tracing::info!(
+        "viewer: conectando via Iroh ao endpoint {} (relay {relay_url})",
+        descriptor.endpoint_id
+    );
     let connection = connect_iroh(secret_key, relay_url, &descriptor).await?;
     let fingerprint = connection.peer_iroh_id().map(|id| format!("iroh:{id}"));
+    tracing::info!(
+        "viewer: transporte Iroh estabelecido (identidade {})",
+        fingerprint.as_deref().unwrap_or("desconhecida")
+    );
     connect_over(connection, code, fingerprint).await
 }
 
@@ -145,9 +158,16 @@ async fn connect_over(
     // Await the auth outcome, tolerating a PendingApproval notice first.
     loop {
         match control.recv().await? {
-            ControlMessage::AuthResponse(protocol::AuthOutcome::Accepted { .. }) => break,
-            ControlMessage::AuthResponse(protocol::AuthOutcome::PendingApproval) => continue,
+            ControlMessage::AuthResponse(protocol::AuthOutcome::Accepted { .. }) => {
+                tracing::info!("viewer: sessão aceita pelo host");
+                break;
+            }
+            ControlMessage::AuthResponse(protocol::AuthOutcome::PendingApproval) => {
+                tracing::info!("viewer: aguardando aprovação manual do host");
+                continue;
+            }
             ControlMessage::AuthResponse(protocol::AuthOutcome::Rejected { reason }) => {
+                tracing::warn!("viewer: conexão rejeitada pelo host: {reason}");
                 return Err(ViewerError::Rejected(reason));
             }
             ControlMessage::Error { .. } => return Err(ViewerError::IncompatibleProtocol),
@@ -160,6 +180,7 @@ async fn connect_over(
         ControlMessage::MonitorList { monitors } => monitors,
         _ => Vec::new(),
     };
+    tracing::info!("viewer: host anunciou {} monitor(es)", monitors.len());
 
     let (sender, receiver) = control.split();
 
@@ -212,6 +233,7 @@ fn spawn_control_task(mut receiver: ControlReceiver, event_tx: mpsc::UnboundedSe
                     let _ = event_tx.send(ViewerEvent::MonitorsUpdated(monitors));
                 }
                 Ok(ControlMessage::Disconnect { reason }) => {
+                    tracing::info!("viewer: host encerrou a sessão: {reason}");
                     let _ = event_tx.send(ViewerEvent::Disconnected(reason));
                     break;
                 }
@@ -220,6 +242,7 @@ fn spawn_control_task(mut receiver: ControlReceiver, event_tx: mpsc::UnboundedSe
                 }
                 Ok(_) => {}
                 Err(_) => {
+                    tracing::warn!("viewer: conexão de controle perdida");
                     let _ = event_tx.send(ViewerEvent::Disconnected("connection lost".into()));
                     break;
                 }
@@ -235,12 +258,21 @@ fn spawn_media_task(
 ) {
     tokio::spawn(async move {
         let mut decoder = VideoDecoder::new();
+        let mut first_frame = true;
         loop {
             match connection.recv_media().await {
                 Ok(message) => match decoder.decode(&message) {
                     // `None` means the message carried no picture yet (e.g.
                     // H.264 parameter sets before the first keyframe).
                     Ok(Some(current)) => {
+                        if first_frame {
+                            first_frame = false;
+                            tracing::info!(
+                                "viewer: primeiro frame decodificado ({}x{})",
+                                current.width,
+                                current.height
+                            );
+                        }
                         if let Ok(mut slot) = frame.lock() {
                             *slot = Some(current.clone());
                         }
@@ -252,6 +284,7 @@ fn spawn_media_task(
                     }
                 },
                 Err(_) => {
+                    tracing::info!("viewer: stream de mídia encerrado");
                     let _ = event_tx.send(ViewerEvent::Disconnected("stream ended".into()));
                     break;
                 }

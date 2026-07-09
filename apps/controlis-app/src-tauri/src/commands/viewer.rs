@@ -99,6 +99,13 @@ pub async fn connect_viewer(
     let store = Store::open(&env.db_path)
         .map_err(|e| format!("armazenamento de confiança indisponível: {e}"))?;
     let target = resolve_target(&code, addr_override.as_deref())?;
+    match &target {
+        ResolvedTarget::Lan(t) => tracing::info!("viewer: alvo resolvido — LAN {}", t.addr),
+        ResolvedTarget::Internet { session_id, .. } => tracing::info!(
+            "viewer: alvo resolvido — internet, rendezvous id {}",
+            session_id.get()
+        ),
+    }
 
     let (handle, peer_key, nickname) =
         match target {
@@ -126,6 +133,11 @@ pub async fn connect_viewer(
                     .lookup(session_id)
                     .await
                     .map_err(|e| format!("falha ao consultar rendezvous: {e}"))?;
+                tracing::info!(
+                    "viewer: rendezvous respondeu — endpoint {} (relay {:?})",
+                    lookup.endpoint.endpoint_id,
+                    lookup.endpoint.relay_url
+                );
                 let peer_key = format!("rendezvous:{}", session_id.get());
                 let expected_identity = format!("iroh:{}", lookup.endpoint.endpoint_id);
                 expected_iroh_identity(&store, &peer_key, &expected_identity)?;
@@ -147,6 +159,7 @@ pub async fn connect_viewer(
         };
 
     if let Some(fingerprint) = handle.fingerprint() {
+        tracing::info!("viewer: identidade do host fixada (TOFU) para {peer_key}");
         store
             .remember_host(&KnownHost {
                 peer_key,
@@ -259,6 +272,7 @@ fn expected_iroh_identity(store: &Store, peer_key: &str, actual: &str) -> Result
 
 fn connect_error_text(error: ViewerError) -> String {
     let detail = error.to_string();
+    tracing::warn!("viewer: falha ao conectar: {detail}");
     if detail.contains("fingerprint does not match") {
         "A identidade deste host mudou desde a última conexão. \
          A conexão foi bloqueada por segurança. Se o host foi reinstalado, \
@@ -324,7 +338,10 @@ async fn pump_events(
                 let _ = on_event.send(ViewerUiEvent::Disconnected { reason });
                 break;
             }
-            ViewerEvent::Error(message) => ViewerUiEvent::Error { message },
+            ViewerEvent::Error(message) => {
+                tracing::warn!("viewer: erro na sessão: {message}");
+                ViewerUiEvent::Error { message }
+            }
         };
         if on_event.send(ui_event).is_err() {
             break;
