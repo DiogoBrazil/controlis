@@ -2,7 +2,7 @@
 name = "controlis"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.91"
 license = "MIT OR Apache-2.0"
 
 # Own workspace, separate from the Leptos frontend and from the root crates
@@ -45,4 +45,5 @@ codec = { path = "../../../crates/codec" }
 security = { path = "../../../crates/security" }
 storage = { path = "../../../crates/storage" }
 transport = { path = "../../../crates/transport" }
+rendezvous = { path = "../../../crates/rendezvous" }
 wayland-portal = { path = "../../../crates/wayland-portal", optional = true }
