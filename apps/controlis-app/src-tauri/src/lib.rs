@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use storage::{AppPaths, Config};
 use tauri::Manager;
-use transport::HostIdentity;
+use transport::{HostIdentity, IrohSecretKey};
 
 use commands::host::{host_command, start_host, stop_host, HostSlot};
 use commands::viewer::{
@@ -20,6 +20,7 @@ use commands::viewer::{
 pub struct AppEnv {
     pub config: Config,
     pub identity: HostIdentity,
+    pub iroh_secret_key: IrohSecretKey,
     pub db_path: PathBuf,
 }
 
@@ -35,11 +36,16 @@ pub fn run() {
         .setup(|app| {
             let paths = AppPaths::discover()?;
             let config = Config::load(&paths.config_file())?;
-            let identity =
-                HostIdentity::load_or_generate(&paths.certificate_file(), &paths.private_key_file())?;
+            let identity = HostIdentity::load_or_generate(
+                &paths.certificate_file(),
+                &paths.private_key_file(),
+            )?;
+            let iroh_secret_key =
+                transport::load_or_generate_iroh_secret_key(&paths.iroh_secret_key_file())?;
             app.manage(AppEnv {
                 config,
                 identity,
+                iroh_secret_key,
                 db_path: paths.database_file(),
             });
             app.manage(HostSlot::default());
