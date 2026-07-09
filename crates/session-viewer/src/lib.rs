@@ -14,7 +14,10 @@ use std::sync::{Arc, Mutex};
 use codec::{RgbaFrame, VideoDecoder};
 use protocol::{ControlMessage, Hello, MonitorInfo, Role, PROTOCOL_VERSION};
 use tokio::sync::mpsc;
-use transport::{connect_viewer, Connection, ControlReceiver, ControlSender, Fingerprint};
+use transport::{
+    connect_iroh, connect_viewer, Connection, ControlReceiver, ControlSender, Fingerprint,
+    IrohEndpointDescriptor, IrohSecretKey,
+};
 
 /// The latest decoded frame, or `None` until one arrives. The UI takes the frame
 /// when present and uploads it as a texture.
@@ -102,6 +105,29 @@ pub async fn connect(
 ) -> Result<ViewerHandle, ViewerError> {
     let seen: transport::SeenFingerprint = Arc::new(Mutex::new(None));
     let connection = connect_viewer(addr, expected, seen.clone()).await?;
+    let fingerprint = seen
+        .lock()
+        .ok()
+        .and_then(|f| f.as_ref().map(|f| f.to_string()));
+    connect_over(connection, code, fingerprint).await
+}
+
+pub async fn connect_internet(
+    secret_key: IrohSecretKey,
+    relay_url: &str,
+    descriptor: IrohEndpointDescriptor,
+    code: String,
+) -> Result<ViewerHandle, ViewerError> {
+    let connection = connect_iroh(secret_key, relay_url, &descriptor).await?;
+    let fingerprint = connection.peer_iroh_id().map(|id| format!("iroh:{id}"));
+    connect_over(connection, code, fingerprint).await
+}
+
+async fn connect_over(
+    connection: Connection,
+    code: String,
+    fingerprint: Option<String>,
+) -> Result<ViewerHandle, ViewerError> {
     let mut control = connection.open_control().await?;
 
     control
@@ -112,7 +138,9 @@ pub async fn connect(
             supported_codecs: codec::supported_codecs().to_vec(),
         }))
         .await?;
-    control.send(&ControlMessage::AuthRequest { session_code: code }).await?;
+    control
+        .send(&ControlMessage::AuthRequest { session_code: code })
+        .await?;
 
     // Await the auth outcome, tolerating a PendingApproval notice first.
     loop {
@@ -133,7 +161,6 @@ pub async fn connect(
         _ => Vec::new(),
     };
 
-    let fingerprint = seen.lock().ok().and_then(|f| f.as_ref().map(|f| f.to_string()));
     let (sender, receiver) = control.split();
 
     let (event_tx, event_rx) = mpsc::unbounded_channel();
@@ -168,15 +195,18 @@ fn spawn_input_task(
     });
 }
 
-fn spawn_control_task(
-    mut receiver: ControlReceiver,
-    event_tx: mpsc::UnboundedSender<ViewerEvent>,
-) {
+fn spawn_control_task(mut receiver: ControlReceiver, event_tx: mpsc::UnboundedSender<ViewerEvent>) {
     tokio::spawn(async move {
         loop {
             match receiver.recv().await {
-                Ok(ControlMessage::Resize { width_px, height_px }) => {
-                    let _ = event_tx.send(ViewerEvent::Resized { width_px, height_px });
+                Ok(ControlMessage::Resize {
+                    width_px,
+                    height_px,
+                }) => {
+                    let _ = event_tx.send(ViewerEvent::Resized {
+                        width_px,
+                        height_px,
+                    });
                 }
                 Ok(ControlMessage::MonitorList { monitors }) => {
                     let _ = event_tx.send(ViewerEvent::MonitorsUpdated(monitors));
