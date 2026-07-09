@@ -1,6 +1,6 @@
 # STATUS do Controlis — diário de evolução e pendências
 
-> Última atualização: **2026-07-08** (noite: UI migrada de egui para Tauri v2 + Leptos; antes: teclado validado, código de acesso autocontido).
+> Última atualização: **2026-07-08** (noite: Fase 8 pronta para teste com Iroh + relay self-host; antes: UI migrada de egui para Tauri v2 + Leptos, teclado validado, código de acesso autocontido).
 > Este arquivo é o ponto de retomada: o que está pronto, o que foi observado
 > nos testes e o que falta revisar. Complementa o `PLANO-TECNICO.md` (plano) e
 > o `TESTE-DUAS-MAQUINAS.md` (roteiro de teste).
@@ -12,7 +12,7 @@
 | 0–5  | Protocolo, transporte QUIC, captura, input, codec tiles+JPEG, sessões host/viewer, UI egui, storage | ✅ Prontas, 39 testes verdes, clippy limpo |
 | 6    | Multi-monitor (origin_x/origin_y, troca ao vivo, seletor no viewer) | ✅ Pronta (e2e cobre troca de monitor) |
 | 7    | H.264 via openh264 (feature `h264`, default; negociação no handshake, fallback JpegTiles; PROTOCOL_VERSION=2) | ✅ Implementada. ⚠️ Falta medir banda real (aceite: 30fps@1080p < 4 Mbps) |
-| 8    | Rendezvous / relay / NAT traversal (acesso fora da LAN) | ❌ NÃO iniciada — próxima grande fase |
+| 8    | Rendezvous / relay / NAT traversal (acesso fora da LAN) | ✅ Implementada para primeiro teste real: rendezvous HTTP + Iroh + relay self-host configurado por TOML |
 | 9    | Wayland nativo (portal ScreenCast+RemoteDesktop, PipeWire, input via libei/EIS) | ✅ Pronta e validada em runtime no GNOME 46 |
 
 ## 2. Cronologia dos testes (2026-07-07)
@@ -84,9 +84,48 @@ Build no Windows funcionou de primeira:
   (Obs.: com a mensagem `Text`, acentos digitados no viewer chegam como
   caracteres prontos — o gap real fica restrito a composição local exótica.)
 
-### 3.5 ❌ Fase 8 — Rendezvous / Relay / NAT
-- Hoje só funciona na mesma LAN. Próxima grande entrega para uso real
-  (conceito AnyDesk: conectar por ID através da internet).
+### 3.5 ✅ Fase 8 — Rendezvous / Relay / NAT
+- Fluxo internet implementado para teste: quando `config.toml` contém
+  `rendezvous_url` e `relay_url`, o host registra um endpoint Iroh no
+  `controlis-server`, renova o TTL, exibe código v1 com ID de rendezvous e
+  aceita conexão por Iroh ou LAN.
+- O viewer parseia v1, consulta `/v1/sessions/{id}`, conecta via Iroh usando
+  relay self-host obrigatório e autentica com o mesmo `AuthRequest.session_code`.
+  Se o campo avançado `IP:porta` for preenchido, v1 também pode ser usado como
+  fallback LAN manual.
+- Pinning: LAN continua por fingerprint TLS (`lan:<ip:porta>`); internet usa
+  `peer_key = rendezvous:<id>` e identidade persistida `iroh:<endpoint_id>`.
+  Mudança de endpoint conhecido bloqueia a conexão.
+- O relay público do Iroh não é usado por padrão; o endpoint é criado com
+  `RelayMode::Custom` a partir de `relay_url`.
+
+### 3.5.1 ✅ Preparação pré-Fase 8 — TOFU persistente no app Tauri
+- O backend Tauri do viewer agora usa o SQLite para fixar a identidade do host
+  por alvo (`peer_key`, hoje `lan:<ip:porta>`). A primeira conexão registra o
+  fingerprint apresentado; reconexões passam esse fingerprint esperado ao
+  verificador TOFU do transporte.
+- Se o certificado de um host conhecido mudar, a conexão é bloqueada com erro
+  explícito de identidade alterada. Não há UI de "esquecer host" ainda; se o
+  host for reinstalado, o reset do pin continua manual.
+- O storage ganhou `known_host`, separado de `known_peer`, para que a Fase 8
+  reutilize o mesmo modelo com chaves como `rendezvous:<id>` sem mudar o
+  mecanismo de pinning.
+
+### 3.5.2 ✅ Fase 8 — rendezvous HTTP + transporte Iroh
+- `crates/security::ConnectCode` agora suporta `ConnectTarget::Lan` (v0,
+  compatível) e `ConnectTarget::Rendezvous { id }` (v1). O código continua com
+  16 caracteres Crockford no formato `XXXX-XXXX-XXXX-XXXX`.
+- `crates/rendezvous` define os DTOs compartilhados e as regras do store em
+  memória: TTL máximo de 120 s, token de posse por registro, colisão bloqueada
+  enquanto o registro está ativo e reuso permitido após expiração.
+- `servers/controlis-server` é o primeiro processo para VPS/self-host: sem
+  persistência em disco por enquanto, configurável por
+  `CONTROLIS_SERVER_BIND` (default `0.0.0.0:8080`).
+- `crates/transport` agora encapsula Quinn (LAN) e Iroh (internet) sob a mesma
+  API de sessão. A chave Iroh é persistida em `iroh_secret_key.txt` no diretório
+  de dados do app.
+- `config.toml` ganhou `rendezvous_url` e `relay_url`; se faltarem ou se Iroh
+  não ficar online em ~8 s, o host registra no log e volta para código LAN.
 
 ### 3.6 Melhorias de UX/robustez
 - ✅ A UI do host agora mostra o backend ativo ("Backend: Wayland portal
@@ -127,8 +166,24 @@ Build no Windows funcionou de primeira:
 
 ## 4. Como retomar o ambiente de teste (resumo)
 
-Pré-requisitos (uma vez por máquina): `rustup target add wasm32-unknown-unknown`
+Pré-requisitos (uma vez por máquina): Rust 1.91+, `rustup target add wasm32-unknown-unknown`
 e `cargo install trunk tauri-cli`; no Linux, `libwebkit2gtk-4.1-dev`.
+
+Para teste internet, configure nas duas máquinas:
+
+```toml
+rendezvous_url = "https://SEU-VPS:8080"
+relay_url = "https://SEU-RELAY"
+```
+
+No VPS, rode o rendezvous com:
+
+```bash
+CONTROLIS_SERVER_BIND=0.0.0.0:8080 cargo run -p controlis-server
+```
+
+Rode o `iroh-relay` como processo separado apontando para o mesmo host/URL
+publicado em `relay_url`.
 
 - **Linux (host):** `cd apps/controlis-app/src-tauri &&
   cargo tauri build --features wayland,real-capture`
@@ -147,14 +202,15 @@ O MVP LAN está **funcional de ponta a ponta nas duas direções** entre Linux
 (Wayland/GNOME 46) e Windows, com o teclado do host Windows e a conexão só
 com código **validados pelo usuário**. Em 2026-07-08 (noite) a **UI foi
 migrada de egui para Tauri v2 + Leptos** (item 3.8): visual moderno/responsivo,
-mesma lógica de sessão (crates intactos, testes verdes, clippy limpo nos três
-alvos — workspace raiz, src-tauri e wasm).
+mesma lógica de sessão LAN. A Fase 8 agora adiciona o caminho internet por
+Iroh/rendezvous sem remover o caminho LAN.
 
 **Próxima sessão:** validar a UI nova localmente (visual + smoke loopback com
 duas instâncias) e depois o teste com duas máquinas: fluidez do canvas a
 1080p, teclado/atalhos vindos do browser, troca de monitor, aprovação,
-Mbps no Registro e teardown no Linux (fechar janela/Ctrl+C sem congelar o
+Mbps no Registro, TOFU persistente (reconexão passa; certificado trocado
+bloqueia) e teardown no Linux (fechar janela/Ctrl+C sem congelar o
 gnome-shell). No Windows, instalar as ferramentas (`trunk`, `tauri-cli`,
-target wasm) antes do build. Validado isso, começa a **Fase 8**
-(rendezvous/relay/NAT), reusando os bits de versão do código de acesso para o
-ID de rendezvous.
+target wasm) antes do build. Para a **Fase 8**, o próximo passo é o teste real:
+VPS com `controlis-server` + `iroh-relay`, `config.toml` preenchido nas duas
+máquinas e conexão fora da LAN usando só o código.

@@ -5,8 +5,9 @@
 > fluidez do vídeo (frames JPEG via IPC → canvas).
 
 Testes automatizados cobrem protocolo, serialização, segurança, codec (dirty
-tiles), conversão de coordenadas, handshake/TOFU e o ciclo completo headless
-(`cargo test --workspace`). Esta matriz cobre o que exige display e SO reais.
+tiles), conversão de coordenadas, handshake/TOFU, rendezvous HTTP inicial,
+parse de código v1 e o ciclo completo headless (`cargo test --workspace`).
+Esta matriz cobre o que exige display, SO reais ou infraestrutura externa.
 
 ## Combinações de plataforma (MVP)
 
@@ -40,10 +41,34 @@ Wayland (host) entra na Fase 9.
 - [ ] UI do host mostra o backend de captura/input ativo (sem fallback silencioso).
 - [ ] Encerrar pela host libera o input e gera novo código.
 - [ ] Queda de rede: host volta ao estado "aguardando"; nenhuma tecla fica presa.
-- [ ] TOFU: reconexão com o mesmo host passa; certificado trocado gera alerta.
+- [ ] TOFU: primeira conexão registra a identidade do alvo; reconexão com o
+      mesmo host passa.
+- [ ] TOFU: certificado trocado no mesmo `IP:porta` é bloqueado com mensagem de
+      identidade alterada (reset do pin ainda é manual).
 
 ## Ambiente de captura/input em CI
 
 - Linux: `Xvfb` permite testar captura X11 e injeção XTest de ponta a ponta
   (injetar tecla → capturar efeito). Marcar esses testes como `#[ignore]` no CI
   headless padrão e rodá-los no job dedicado com display virtual.
+
+## Fase 8 — internet/rendezvous
+
+- [ ] VPS com `controlis-server` rodando (`CONTROLIS_SERVER_BIND=0.0.0.0:8080`);
+      `/healthz` responde `ok`.
+- [ ] VPS com `iroh-relay` rodando como processo separado; `relay_url` público
+      é o mesmo configurado no app.
+- [ ] `config.toml` do host e viewer contém:
+      `rendezvous_url = "https://..."` e `relay_url = "https://..."`.
+- [ ] `POST /v1/register` cria registro, `GET /v1/sessions/{id}` retorna o
+      endpoint, `POST /v1/refresh` renova TTL e `POST /v1/unregister` remove.
+- [ ] Token errado em `refresh`/`unregister` retorna 403; registro duplicado
+      ativo retorna 409; registro expirado pode ser reutilizado.
+- [ ] Host com internet configurada mostra código v1 e loga "internet ativo".
+- [ ] Viewer fora da LAN conecta por ID via relay self-host, sem preencher
+      endereço manual e sem fallback para relay público.
+- [ ] Com `relay_url` inválido, host loga fallback e volta a gerar código LAN.
+- [ ] Código v1 com endereço manual avançado conecta por LAN, útil para
+      diagnosticar rendezvous/relay.
+- [ ] TOFU por alvo internet: primeira conexão fixa identidade; reconexão passa;
+      identidade divergente bloqueia.
