@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::str::FromStr;
 
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use sha2::{Digest, Sha256};
@@ -25,6 +26,24 @@ impl Fingerprint {
 impl std::fmt::Display for Fingerprint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+impl FromStr for Fingerprint {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let mut pairs = 0usize;
+        for part in value.split(':') {
+            pairs += 1;
+            if part.len() != 2 || !part.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Err("fingerprint must be colon-separated hex pairs".into());
+            }
+        }
+        if pairs != 32 {
+            return Err("fingerprint must contain 32 SHA-256 bytes".into());
+        }
+        Ok(Self(value.to_ascii_uppercase()))
     }
 }
 
@@ -57,7 +76,11 @@ impl HostIdentity {
                 let key = PrivateKeyDer::try_from(key_bytes)
                     .map_err(|e| TransportError::Certificate(e.to_string()))?;
                 let fingerprint = Fingerprint::of_der(&cert);
-                Ok(Self { cert, key, fingerprint })
+                Ok(Self {
+                    cert,
+                    key,
+                    fingerprint,
+                })
             }
             _ => {
                 let identity = Self::generate()?;
@@ -77,7 +100,11 @@ impl HostIdentity {
             certified.signing_key.serialize_der(),
         ));
         let fingerprint = Fingerprint::of_der(&cert);
-        Ok(Self { cert, key, fingerprint })
+        Ok(Self {
+            cert,
+            key,
+            fingerprint,
+        })
     }
 
     pub fn fingerprint(&self) -> &Fingerprint {
@@ -95,6 +122,26 @@ mod tests {
         assert_eq!(fp.as_str().len(), 32 * 2 + 31); // 32 hex pairs + 31 colons
         assert_eq!(fp, Fingerprint::of_der(b"hello"));
         assert_ne!(fp, Fingerprint::of_der(b"world"));
+    }
+
+    #[test]
+    fn fingerprint_parses_persisted_form() {
+        let fp = Fingerprint::of_der(b"hello");
+        assert_eq!(fp.as_str().parse::<Fingerprint>().unwrap(), fp);
+        assert_eq!(
+            fp.as_str()
+                .to_ascii_lowercase()
+                .parse::<Fingerprint>()
+                .unwrap(),
+            fp
+        );
+    }
+
+    #[test]
+    fn fingerprint_rejects_malformed_strings() {
+        assert!("not-a-fingerprint".parse::<Fingerprint>().is_err());
+        assert!("AA:BB".parse::<Fingerprint>().is_err());
+        assert!("GG:".repeat(32).parse::<Fingerprint>().is_err());
     }
 
     #[test]
