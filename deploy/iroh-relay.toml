@@ -1,0 +1,25 @@
+# Config do iroh-relay (v1.x, compatível com o cliente iroh 1.0.2 do Controlis).
+# Copie para /etc/iroh-relay/config.toml no VPS e troque SEUDOMINIO.
+# Schema: struct Config em iroh-relay/src/main.rs (tag v1.0.2).
+
+enable_relay = true
+
+# Porta 80: upgrade de conexão dos clientes + desafio ACME.
+http_bind_addr = "0.0.0.0:80"
+
+# Descoberta de endereço via QUIC (substitui o STUN nas versões 1.x).
+# Requer TLS válido; usa a porta UDP 7824 por padrão.
+enable_quic_addr_discovery = true
+
+access = "everyone"
+
+[tls]
+https_bind_addr = "0.0.0.0:443"
+hostname = "relay.SEUDOMINIO"
+cert_mode = "LetsEncrypt"
+# Diretório onde os certificados emitidos são persistidos.
+cert_dir = "/var/lib/iroh-relay/certs"
+# prod_tls = false usa o ambiente de staging do Let's Encrypt (para testar
+# sem estourar o rate limit); mude para true quando o DNS estiver certo.
+prod_tls = true
+contact = "diogoifroads@gmail.com"

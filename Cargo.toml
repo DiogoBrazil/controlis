@@ -8,9 +8,11 @@ members = [
     "crates/capture",
     "crates/input",
     "crates/transport",
+    "crates/rendezvous",
     "crates/session-host",
     "crates/session-viewer",
     "crates/wayland-portal",
+    "servers/controlis-server",
 ]
 # The desktop app (Tauri backend + Leptos frontend) lives in apps/controlis-app
 # as its own pair of workspaces; see apps/controlis-app/src-tauri.
@@ -19,7 +21,7 @@ exclude = ["apps/controlis-app"]
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.91"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/controlis/controlis"
 
@@ -32,6 +34,7 @@ codec = { path = "crates/codec" }
 capture = { path = "crates/capture" }
 input = { path = "crates/input" }
 transport = { path = "crates/transport" }
+rendezvous = { path = "crates/rendezvous" }
 session-host = { path = "crates/session-host" }
 session-viewer = { path = "crates/session-viewer" }
 wayland-portal = { path = "crates/wayland-portal" }
@@ -41,12 +44,14 @@ tokio = { version = "1.42", features = ["rt-multi-thread", "macros", "sync", "ti
 
 # Transport / TLS
 quinn = "0.11"
+iroh = { version = "1.0.2", default-features = false, features = ["tls-ring"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rcgen = "0.14"
 sha2 = "0.10"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 serde_bytes = "0.11"
 postcard = { version = "1", features = ["use-std"] }
 
@@ -74,10 +79,13 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "2"
 anyhow = "1"
+axum = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 # Utilities
 bytes = "1"
 crossbeam-channel = "0.5"
+hex = "0.4"
 
 [workspace.lints.rust]
 unsafe_code = "warn"

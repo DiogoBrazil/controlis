@@ -5,8 +5,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use codec::VideoEncoder;
 use input::{coords, InputInjector};
 use protocol::{
-    negotiate_codec, AuthOutcome, ControlMessage, KeyCode, MonitorInfo, MouseButton,
-    PointerAction, VideoCodec, PROTOCOL_VERSION,
+    negotiate_codec, AuthOutcome, ControlMessage, KeyCode, MonitorInfo, MouseButton, PointerAction,
+    VideoCodec, PROTOCOL_VERSION,
 };
 use security::{BruteForceGuard, ConnectCode, GuardDecision};
 use tokio::sync::mpsc;
@@ -37,25 +37,34 @@ pub(crate) async fn run_session(
     event_tx: &mpsc::UnboundedSender<HostEvent>,
     command_rx: &mut mpsc::UnboundedReceiver<HostCommand>,
 ) {
-    let peer = connection.remote_address();
+    let peer = connection.remote_label();
     let mut control = match connection.accept_control().await {
         Ok(c) => c,
         Err(e) => {
-            let _ = event_tx.send(HostEvent::Error(format!("no control stream from {peer}: {e}")));
+            let _ = event_tx.send(HostEvent::Error(format!(
+                "no control stream from {peer}: {e}"
+            )));
             return;
         }
     };
 
-    let viewer_codecs =
-        match authenticate(config, &connection, &mut control, code, guard, event_tx, command_rx)
-            .await
-        {
-            AuthResult::Accepted { viewer_codecs } => viewer_codecs,
-            AuthResult::Ended => {
-                connection.close("authentication failed");
-                return;
-            }
-        };
+    let viewer_codecs = match authenticate(
+        config,
+        &connection,
+        &mut control,
+        code,
+        guard,
+        event_tx,
+        command_rx,
+    )
+    .await
+    {
+        AuthResult::Accepted { viewer_codecs } => viewer_codecs,
+        AuthResult::Ended => {
+            connection.close("authentication failed");
+            return;
+        }
+    };
 
     stream_and_control(
         config,
@@ -85,7 +94,8 @@ async fn authenticate(
     event_tx: &mpsc::UnboundedSender<HostEvent>,
     command_rx: &mut mpsc::UnboundedReceiver<HostCommand>,
 ) -> AuthResult {
-    let peer = connection.remote_address();
+    let peer = connection.remote_label();
+    let guard_addr = connection.remote_address();
     let fingerprint = connection.peer_fingerprint().map(|f| f.to_string());
 
     // Expect Hello, then AuthRequest, each within the handshake timeout.
@@ -115,18 +125,20 @@ async fn authenticate(
         _ => return reject(control, event_tx, peer, "handshake: expected AuthRequest").await,
     };
 
-    if let GuardDecision::Blocked { retry_after } = guard.check(peer.ip(), Instant::now()) {
+    if let GuardDecision::Blocked { retry_after } = guard.check(guard_addr.ip(), Instant::now()) {
         let _ = control
             .send(&ControlMessage::AuthResponse(AuthOutcome::Rejected {
                 reason: format!("too many attempts; retry in {}s", retry_after.as_secs()),
             }))
             .await;
-        let _ = event_tx.send(HostEvent::Log(format!("blocked {peer}: brute-force backoff")));
+        let _ = event_tx.send(HostEvent::Log(format!(
+            "blocked {peer}: brute-force backoff"
+        )));
         return AuthResult::Ended;
     }
 
     if !code.verify(&session_code) {
-        guard.record_failure(peer.ip(), Instant::now());
+        guard.record_failure(guard_addr.ip(), Instant::now());
         let _ = control
             .send(&ControlMessage::AuthResponse(AuthOutcome::Rejected {
                 reason: "invalid session code".into(),
@@ -137,18 +149,20 @@ async fn authenticate(
     }
 
     if _config.require_manual_approval
-        && !await_approval(control, event_tx, command_rx, peer, fingerprint).await
+        && !await_approval(control, event_tx, command_rx, peer.clone(), fingerprint).await
     {
         return AuthResult::Ended;
     }
 
-    guard.record_success(peer.ip());
+    guard.record_success(guard_addr.ip());
     let session_id = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0);
     if control
-        .send(&ControlMessage::AuthResponse(AuthOutcome::Accepted { session_id }))
+        .send(&ControlMessage::AuthResponse(AuthOutcome::Accepted {
+            session_id,
+        }))
         .await
         .is_err()
     {
@@ -164,14 +178,14 @@ async fn await_approval(
     control: &mut ControlChannel,
     event_tx: &mpsc::UnboundedSender<HostEvent>,
     command_rx: &mut mpsc::UnboundedReceiver<HostCommand>,
-    peer: std::net::SocketAddr,
+    peer: String,
     fingerprint: Option<String>,
 ) -> bool {
     let _ = control
         .send(&ControlMessage::AuthResponse(AuthOutcome::PendingApproval))
         .await;
     let _ = event_tx.send(HostEvent::ApprovalRequested(ConnectionRequest {
-        peer_addr: peer.to_string(),
+        peer_addr: peer.clone(),
         fingerprint,
     }));
 
@@ -192,7 +206,7 @@ async fn await_approval(
 async fn reject(
     control: &mut ControlChannel,
     event_tx: &mpsc::UnboundedSender<HostEvent>,
-    peer: std::net::SocketAddr,
+    peer: String,
     reason: &str,
 ) -> AuthResult {
     let _ = control
@@ -222,7 +236,7 @@ async fn stream_and_control(
     event_tx: &mpsc::UnboundedSender<HostEvent>,
     command_rx: &mut mpsc::UnboundedReceiver<HostCommand>,
 ) {
-    let peer = connection.remote_address();
+    let peer = connection.remote_label();
 
     let codec = negotiate_codec(config.codec, codec::supported_codecs(), viewer_codecs);
     let encoder = match VideoEncoder::new(codec, config.target_fps) {
@@ -258,9 +272,13 @@ async fn stream_and_control(
         .unwrap_or_else(|| monitors[0].clone());
 
     let _ = control
-        .send(&ControlMessage::MonitorList { monitors: monitors.clone() })
+        .send(&ControlMessage::MonitorList {
+            monitors: monitors.clone(),
+        })
         .await;
-    let _ = event_tx.send(HostEvent::SessionStarted { peer_addr: peer.to_string() });
+    let _ = event_tx.send(HostEvent::SessionStarted {
+        peer_addr: peer.to_string(),
+    });
 
     let stop = Arc::new(AtomicBool::new(false));
     let active_id = Arc::new(AtomicU32::new(active.id));
@@ -272,8 +290,14 @@ async fn stream_and_control(
     let (media_tx, mut media_rx) = mpsc::channel(1);
     let (input_tx, input_rx) = crossbeam_channel::unbounded::<InputAction>();
 
-    let capture_handle =
-        spawn_capture(config, capturer, encoder, active_id.clone(), stop.clone(), media_tx);
+    let capture_handle = spawn_capture(
+        config,
+        capturer,
+        encoder,
+        active_id.clone(),
+        stop.clone(),
+        media_tx,
+    );
     spawn_injection(injector_factory.clone(), input_rx, event_tx.clone());
 
     let media_conn = connection.clone();
@@ -295,8 +319,7 @@ async fn stream_and_control(
             if elapsed >= Duration::from_secs(5) {
                 let mbps = (bytes as f64 * 8.0) / elapsed.as_secs_f64() / 1_000_000.0;
                 let fps = frames as f64 / elapsed.as_secs_f64();
-                let line =
-                    format!("mídia ({codec:?}): {mbps:.2} Mbps, {fps:.1} fps");
+                let line = format!("mídia ({codec:?}): {mbps:.2} Mbps, {fps:.1} fps");
                 tracing::info!("{line}");
                 let _ = media_events.send(HostEvent::Log(line));
                 bytes = 0;
@@ -306,7 +329,15 @@ async fn stream_and_control(
         }
     });
 
-    let reason = control_loop(&mut control, command_rx, &input_tx, &monitors, active_id, active).await;
+    let reason = control_loop(
+        &mut control,
+        command_rx,
+        &input_tx,
+        &monitors,
+        active_id,
+        active,
+    )
+    .await;
 
     // Tear down: stop capture, drop input sender so the injector releases keys,
     // close the connection, and wait for the helper tasks.
@@ -458,7 +489,10 @@ fn spawn_injection(
     });
 }
 
-fn apply_input(injector: &mut dyn InputInjector, action: InputAction) -> Result<(), input::InputError> {
+fn apply_input(
+    injector: &mut dyn InputInjector,
+    action: InputAction,
+) -> Result<(), input::InputError> {
     match action {
         InputAction::Move(x, y) => injector.move_pointer(x, y),
         InputAction::Button(button, act) => injector.mouse_button(button, act),

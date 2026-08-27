@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 protocol.workspace = true
 transport.workspace = true
+rendezvous.workspace = true
 capture.workspace = true
 input.workspace = true
 codec.workspace = true

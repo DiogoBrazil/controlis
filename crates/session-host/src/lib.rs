@@ -16,9 +16,14 @@ use std::sync::Arc;
 use capture::{CaptureError, ScreenCapturer};
 use input::{InputError, InputInjector};
 use protocol::VideoCodec;
+use rendezvous::{
+    Client as RendezvousClient, EndpointDescriptor, RefreshRequest, RegisterRequest, SessionId,
+    UnregisterRequest, DEFAULT_TTL_SECS,
+};
 use security::{BruteForceGuard, ConnectCode};
 use tokio::sync::mpsc;
-use transport::{HostIdentity, HostListener};
+use tokio::task::JoinHandle;
+use transport::{HostIdentity, HostListener, IrohListener, IrohSecretKey};
 
 /// Creates a fresh screen capturer for a session (called once per session).
 pub type CapturerFactory =
@@ -41,6 +46,14 @@ pub struct HostConfig {
     /// is usually `0.0.0.0` and says nothing about how peers reach this host).
     /// `None` falls back to loopback, which only works for same-machine tests.
     pub advertised_ip: Option<Ipv4Addr>,
+    pub internet: Option<InternetHostConfig>,
+}
+
+#[derive(Debug, Clone)]
+pub struct InternetHostConfig {
+    pub rendezvous_url: String,
+    pub relay_url: String,
+    pub secret_key: IrohSecretKey,
 }
 
 impl Default for HostConfig {
@@ -51,6 +64,7 @@ impl Default for HostConfig {
             codec: VideoCodec::JpegTiles,
             target_fps: 20,
             advertised_ip: None,
+            internet: None,
         }
     }
 }
@@ -153,18 +167,29 @@ async fn run(
     let mut guard = BruteForceGuard::new();
 
     loop {
-        let code = ConnectCode::generate(advertised_addr);
-        if event_tx.send(HostEvent::CodeReady(code.as_str().to_string())).is_err() {
+        let internet_registration = register_internet(&config, &event_tx).await;
+        let code = match &internet_registration {
+            Some(registration) => registration.code.clone(),
+            None => ConnectCode::generate(advertised_addr),
+        };
+        if event_tx
+            .send(HostEvent::CodeReady(code.as_str().to_string()))
+            .is_err()
+        {
             return;
         }
 
-        let connection = match listener.accept().await {
+        let connection = match accept_any(&listener, internet_registration.as_ref()).await {
             Some(Ok(conn)) => conn,
             Some(Err(e)) => {
                 let _ = event_tx.send(HostEvent::Error(format!("accept failed: {e}")));
+                unregister_internet(internet_registration).await;
                 continue;
             }
-            None => return,
+            None => {
+                unregister_internet(internet_registration).await;
+                return;
+            }
         };
 
         session::run_session(
@@ -178,5 +203,149 @@ async fn run(
             &mut command_rx,
         )
         .await;
+        unregister_internet(internet_registration).await;
+    }
+}
+
+#[derive(Debug)]
+struct InternetRegistration {
+    client: RendezvousClient,
+    listener: IrohListener,
+    session_id: SessionId,
+    token: String,
+    code: ConnectCode,
+    refresh_task: JoinHandle<()>,
+}
+
+async fn register_internet(
+    config: &HostConfig,
+    event_tx: &mpsc::UnboundedSender<HostEvent>,
+) -> Option<InternetRegistration> {
+    let internet = config.internet.as_ref()?;
+    let client = match RendezvousClient::new(&internet.rendezvous_url) {
+        Ok(client) => client,
+        Err(e) => {
+            log_internet_fallback(event_tx, format!("rendezvous inválido: {e}"));
+            return None;
+        }
+    };
+    let listener = match IrohListener::bind(internet.secret_key.clone(), &internet.relay_url).await
+    {
+        Ok(listener) => listener,
+        Err(e) => {
+            log_internet_fallback(event_tx, format!("transporte Iroh indisponível: {e}"));
+            return None;
+        }
+    };
+    let session_id = SessionId::generate();
+    let code = match ConnectCode::generate_rendezvous(session_id.get()) {
+        Ok(code) => code,
+        Err(e) => {
+            log_internet_fallback(event_tx, format!("código internet indisponível: {e}"));
+            return None;
+        }
+    };
+    let endpoint = endpoint_descriptor(listener.descriptor());
+    let response = match client
+        .register(&RegisterRequest {
+            session_id,
+            endpoint,
+            ttl_secs: Some(DEFAULT_TTL_SECS),
+        })
+        .await
+    {
+        Ok(response) => response,
+        Err(e) => {
+            log_internet_fallback(event_tx, format!("registro rendezvous falhou: {e}"));
+            return None;
+        }
+    };
+    let _ = event_tx.send(HostEvent::Log(format!(
+        "internet ativo: rendezvous {}, relay {}",
+        internet.rendezvous_url, internet.relay_url
+    )));
+    let refresh_task = spawn_refresh_task(
+        client.clone(),
+        session_id,
+        response.token.clone(),
+        endpoint_descriptor(listener.descriptor()),
+    );
+    Some(InternetRegistration {
+        client,
+        listener,
+        session_id,
+        token: response.token,
+        code,
+        refresh_task,
+    })
+}
+
+fn log_internet_fallback(event_tx: &mpsc::UnboundedSender<HostEvent>, reason: String) {
+    tracing::warn!("internet disabled: {reason}");
+    let _ = event_tx.send(HostEvent::Log(format!(
+        "internet indisponível ({reason}); usando código LAN"
+    )));
+}
+
+async fn accept_any(
+    lan: &HostListener,
+    internet: Option<&InternetRegistration>,
+) -> Option<Result<transport::Connection, transport::TransportError>> {
+    match internet {
+        Some(internet) => {
+            tokio::select! {
+                lan = lan.accept() => lan,
+                iroh = internet.listener.accept() => iroh,
+            }
+        }
+        None => lan.accept().await,
+    }
+}
+
+async fn unregister_internet(registration: Option<InternetRegistration>) {
+    let Some(registration) = registration else {
+        return;
+    };
+    registration.refresh_task.abort();
+    let _ = registration
+        .client
+        .unregister(&UnregisterRequest {
+            session_id: registration.session_id,
+            token: registration.token,
+        })
+        .await;
+}
+
+fn spawn_refresh_task(
+    client: RendezvousClient,
+    session_id: SessionId,
+    token: String,
+    endpoint: EndpointDescriptor,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut interval =
+            tokio::time::interval(std::time::Duration::from_secs(DEFAULT_TTL_SECS / 2));
+        loop {
+            interval.tick().await;
+            if let Err(e) = client
+                .refresh(&RefreshRequest {
+                    session_id,
+                    token: token.clone(),
+                    endpoint: endpoint.clone(),
+                    ttl_secs: Some(DEFAULT_TTL_SECS),
+                })
+                .await
+            {
+                tracing::warn!("internet rendezvous refresh failed: {e}");
+            }
+        }
+    })
+}
+
+fn endpoint_descriptor(descriptor: transport::IrohEndpointDescriptor) -> EndpointDescriptor {
+    EndpointDescriptor {
+        endpoint_id: descriptor.endpoint_id,
+        relay_url: descriptor.relay_url,
+        direct_addrs: descriptor.direct_addrs,
     }
 }

@@ -8,11 +8,17 @@
 mod connection;
 mod endpoint;
 mod identity;
+mod iroh_endpoint;
 mod tls;
 
 pub use connection::{Connection, ControlChannel, ControlReceiver, ControlSender};
 pub use endpoint::{connect_viewer, HostListener};
 pub use identity::{Fingerprint, HostIdentity};
+pub use iroh::{EndpointId, SecretKey as IrohSecretKey};
+pub use iroh_endpoint::{
+    connect_iroh, load_or_generate_secret_key as load_or_generate_iroh_secret_key,
+    IrohEndpointDescriptor, IrohListener,
+};
 pub use tls::{client_config, server_config, SeenFingerprint};
 
 /// Errors from establishing or using the transport.

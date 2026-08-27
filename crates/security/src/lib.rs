@@ -9,5 +9,5 @@ mod connect_code;
 mod rate_limit;
 
 pub use code::{verify_code, SessionCode};
-pub use connect_code::{ConnectCode, ConnectCodeError};
+pub use connect_code::{ConnectCode, ConnectCodeError, ConnectTarget};
 pub use rate_limit::{BruteForceGuard, GuardDecision};

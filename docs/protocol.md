@@ -48,21 +48,69 @@ Regras no host:
 ### Código de acesso autocontido
 
 `AuthRequest.session_code` carrega o **código de acesso completo** exibido no
-host. O código não é só o segredo: ele embute o endereço do host, para que o
-viewer digite uma única string (sem precisar do IP separado). Formato v0:
+host. O código não é só o segredo: ele embute o alvo, para que o viewer digite
+uma única string (sem precisar do IP separado).
+
+Formato v0 (LAN):
 
 - Payload de 80 bits: versão (2 bits, `0`) + segredo CSPRNG (30 bits) +
   IPv4 (32 bits) + porta (16 bits).
 - Codificação base32 Crockford (`0-9` + letras sem I/L/O/U) → 16 caracteres,
   exibidos `XXXX-XXXX-XXXX-XXXX`. Leitura tolera minúsculas, separadores e as
   confusões `O→0`, `I/L→1`.
-- Os bits de versão permitem evoluir o formato (ex.: Fase 8 — ID de rendezvous
-  no mesmo campo) sem quebrar o parse.
 - O endereço embutido não é secreto; o segredo de 30 bits, combinado com uso
   único + backoff + aprovação manual, é a credencial. IPv6 fora de escopo.
 
+Formato v1 (Fase 8 / internet):
+
+- Payload de 80 bits: versão (2 bits, `1`) + segredo CSPRNG (30 bits) +
+  ID de rendezvous (48 bits).
+- O viewer usa o ID para consultar o servidor rendezvous e obter os metadados
+  de alcance do host. O segredo continua viajando em `AuthRequest.session_code`
+  e é verificado pelo host depois que o transporte E2E abre.
+- O app conecta v1 via Iroh/rendezvous quando `rendezvous_url` e `relay_url`
+  estão configurados. Se o viewer preencher endereço manual avançado, v1 usa
+  esse `IP:porta` como fallback LAN e mantém o código completo como segredo.
+
 A decodificação acontece toda no viewer (`crates/security/connect_code.rs`);
 nada muda no fio além do tamanho da string.
+
+### Rendezvous HTTP (Fase 8)
+
+Contrato compartilhado em `crates/rendezvous`; servidor inicial em
+`servers/controlis-server`.
+
+| Rota | Corpo | Resposta | Observação |
+|---|---|---|---|
+| `GET /healthz` | — | `ok` | health check |
+| `POST /v1/register` | `RegisterRequest` | `RegisterResponse` | registra `session_id`, endpoint e TTL; retorna token de posse |
+| `POST /v1/refresh` | `RefreshRequest` | `RegisterResponse` | exige token e renova endpoint/TTL |
+| `GET /v1/sessions/{session_id}` | — | `LookupResponse` | retorna endpoint se o registro ainda não expirou |
+| `POST /v1/unregister` | `UnregisterRequest` | `204 No Content` | exige token e remove o registro |
+
+O servidor não vê o segredo da sessão e não termina mídia/input. A implementação
+guarda registros em memória, limita TTL a 120 s, aplica rate limit simples por
+IP e o host renova o registro enquanto o código está válido.
+
+### Transporte internet (Iroh)
+
+- O caminho LAN continua usando Quinn + TLS self-signed com TOFU.
+- O caminho internet usa Iroh 1.0 com ALPN `dev.controlis/session/1`.
+- Host e viewer criam endpoints Iroh com `RelayMode::Custom`, sempre a partir de
+  `relay_url`; relay público não é fallback padrão.
+- O endpoint publicado no rendezvous contém `endpoint_id`, `relay_url` e
+  endereços diretos observados. O viewer monta um `EndpointAddr` com esses dados
+  e abre a mesma sessão de controle/mídia já usada no LAN.
+
+### Pinning de identidade do alvo
+
+O viewer persiste a impressão digital TLS do host por uma chave de alvo
+(`peer_key`). No formato LAN atual, a chave é `lan:<ip:porta>` após aplicar o
+endereço manual avançado, se usado. Na primeira conexão o fingerprint é salvo;
+nas próximas, o transporte recebe esse fingerprint como pin esperado e bloqueia
+certificados divergentes. No formato internet, a chave é `rendezvous:<id>` e a
+identidade persistida é `iroh:<endpoint_id>`; mudança de endpoint conhecido é
+bloqueada antes de abrir a sessão.
 
 ## Controle (após aceite)
 

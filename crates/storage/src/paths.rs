@@ -49,4 +49,8 @@ impl AppPaths {
     pub fn private_key_file(&self) -> PathBuf {
         self.data_dir.join("host_key.der")
     }
+
+    pub fn iroh_secret_key_file(&self) -> PathBuf {
+        self.data_dir.join("iroh_secret_key.txt")
+    }
 }
